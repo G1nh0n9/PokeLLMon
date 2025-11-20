@@ -42,3 +42,11 @@ export OPENAI_API_KEY=<your key>
 python src/main.py # fill in your username and password for PokeLLMon
 ``` 
 
+### Suggestions
+assume .venv is at root (Python 3.11.9)
+```sh
+pip install -r requirements.txt
+$env:PYTHONPATH = ".."; $env:OPENAI_API_KEY = "OPENAI_API_KEY"; python main.py
+```
+
+

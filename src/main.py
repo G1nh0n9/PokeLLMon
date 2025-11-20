@@ -4,22 +4,30 @@ import numpy as np
 import os
 import pickle as pkl
 import argparse
+import sys
+import io
+
+# Fix Windows console encoding issue for Unicode characters
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from src.player import LLMPlayer, HeuristicsPlayer
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--backend", type=str, default="gpt-4-0125", choices=["gpt-3.5-turbo-0125", "gpt-4-1106", "gpt-4-0125"])
 parser.add_argument("--temperature", type=float, default=0.8)
-parser.add_argument("--prompt_algo", default="io", choices=["io", "sc", "cot", "tot"])
+parser.add_argument("--prompt_algo", default="cot", choices=["io", "sc", "cot", "tot"])
 parser.add_argument("--log_dir", type=str, default="./battle_log/pokellmon_vs_bot")
 args = parser.parse_args()
 
 async def main():
-
-    heuristic_player = HeuristicsPlayer(battle_format="gen8randombattle")
+    battle_format = "gen8randombattle"
+    heuristic_player = HeuristicsPlayer(battle_format=battle_format)
 
     os.makedirs(args.log_dir, exist_ok=True)
-    llm_player = LLMPlayer(battle_format="gen8randombattle",
+
+    llm_player = LLMPlayer(battle_format=battle_format,
                            api_key=os.getenv("OPENAI_API_KEY"),
                            backend=args.backend,
                            temperature=args.temperature,
@@ -41,7 +49,7 @@ async def main():
         else:
             await llm_player.battle_against(heuristic_player, n_battles=1)
         for battle_id, battle in llm_player.battles.items():
-            with open(f"{args.log_dir}/{battle_id}.pkl", "wb") as f:
+            with open(f"{args.log_dir}/{battle_format}_{args.backend}_{args.prompt_algo}_{battle_id}.pkl", "wb") as f:
                 pkl.dump(battle, f)
 
 

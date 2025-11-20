@@ -256,11 +256,11 @@ class HeuristicsPlayer(Player):
         # with open("./poke_env/data/static/moves/gen7pokemon_move_dict.json", "w") as f:
         #     json.dump(self.pokemon_move_dict, f, indent=4)
 
-        with open("./poke_env/data/static/moves/moves_effect.json", "r") as f:
+        with open("./data/static/moves/moves_effect.json", "r") as f:
             self.move_effect = json.load(f)
-        with open("./poke_env/data/static/abilities/ability_effect.json", "r") as f:
+        with open("./data/static/abilities/ability_effect.json", "r") as f:
             self.ability_effect = json.load(f)
-        with open("./poke_env/data/static/items/item_effect.json", "r") as f:
+        with open("./data/static/items/item_effect.json", "r") as f:
             self.item_effect = json.load(f)
 
         set(self.move_effect.keys())

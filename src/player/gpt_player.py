@@ -320,14 +320,18 @@ class LLMPlayer(Player):
                 if opponent_move.base_power == 0:
                     continue # only count attack move
 
-                if opponent_move.category.name == "SPECIAL":
+                # Check if stats are available
+                if not active_stats or not all(key in active_stats and active_stats[key] is not None for key in ['spd', 'def', 'atk']):
+                    # Use base power if stats unavailable
+                    power = opponent_move.base_power
+                elif opponent_move.category.name == "SPECIAL":
                     opponent_spa = opponent_stats['spa'] * self.boost_multiplier('spa', opponent_boosts['spa'])
                     active_spd = active_stats['spd'] * self.boost_multiplier('spd', active_boosts['spd'])
                     power = round(opponent_spa / active_spd * opponent_move.base_power)
 
                 elif opponent_move.category.name == "PHYSICAL":
                     opponent_atk = opponent_stats['atk'] * self.boost_multiplier('atk', opponent_boosts['atk'])
-                    active_def = active_stats['atk'] * self.boost_multiplier('atk', active_boosts['atk'])
+                    active_def = active_stats['def'] * self.boost_multiplier('def', active_boosts['def'])
                     power = round(opponent_atk/active_def * opponent_move.base_power)
                 else:
                     power = 0
@@ -373,7 +377,12 @@ class LLMPlayer(Player):
                 active_type = active_type + " and " + battle.active_pokemon.type_2.name.capitalize()
 
         active_move_type_damage_prompt = move_type_damage_wraper(battle.active_pokemon, self.gen.type_chart, opponent_type_list)
-        active_speed = round(active_stats['spe']*self.boost_multiplier('spe', active_boosts['spe']))
+        
+        # Handle case where stats might be None or missing 'spe' key
+        if active_stats and 'spe' in active_stats and active_stats['spe'] is not None:
+            active_speed = round(active_stats['spe']*self.boost_multiplier('spe', active_boosts['spe']))
+        else:
+            active_speed = 0  # Default value if stats are unavailable
 
         try:
             active_ability = self.ability_effect[battle.active_pokemon.ability]["name"]
@@ -393,14 +402,22 @@ class LLMPlayer(Player):
         else:
             active_item = ""
 
+        # Build active pokemon stats string safely
+        if active_stats and all(key in active_stats and active_stats[key] is not None for key in ['atk', 'def', 'spa', 'spd', 'spe']):
+            stats_str = (
+                (f"Attack:{active_stats['atk']}," if active_boosts['atk']==0 else f"Attack:{round(active_stats['atk']*self.boost_multiplier('atk', active_boosts['atk']))}({active_boosts['atk']} stage boosted),") +
+                (f"Defense:{active_stats['def']}," if active_boosts['def']==0 else f"Defense:{round(active_stats['def']*self.boost_multiplier('def', active_boosts['def']))}({active_boosts['def']} stage boosted),") +
+                (f"Special attack:{active_stats['spa']}," if active_boosts['spa']==0 else f"Special attack:{round(active_stats['spa']*self.boost_multiplier('spa', active_boosts['spa']))}({active_boosts['spa']} stage boosted),") +
+                (f"Special defense:{active_stats['spd']}," if active_boosts['spd']==0 else f"Special defense:{round(active_stats['spd']*self.boost_multiplier('spd', active_boosts['spd']))}({active_boosts['spd']} stage boosted),") +
+                (f"Speed:{active_stats['spe']}" if active_boosts['spe']==0 else f"Speed:{round(active_stats['spe']*self.boost_multiplier('spe', active_boosts['spe']))}({active_boosts['spe']} stage boosted),")
+            )
+        else:
+            stats_str = "Attack:None,Defense:None,Special attack:None,Special defense:None,Speed:None"
+        
         active_pokemon_prompt = (
             f"Your current pokemon:{battle.active_pokemon.species},Type:{active_type},HP:{active_hp_fraction}%," +
             (f"Status:{self.check_status(active_status)}," if self.check_status(active_status) else "" ) +
-            (f"Attack:{active_stats['atk']}," if active_boosts['atk']==0 else f"Attack:{round(active_stats['atk']*self.boost_multiplier('atk', active_boosts['atk']))}({active_boosts['atk']} stage boosted),") +
-            (f"Defense:{active_stats['def']}," if active_boosts['def']==0 else f"Defense:{round(active_stats['def']*self.boost_multiplier('def', active_boosts['def']))}({active_boosts['def']} stage boosted),") +
-            (f"Special attack:{active_stats['spa']}," if active_boosts['spa']==0 else f"Special attack:{round(active_stats['spa']*self.boost_multiplier('spa', active_boosts['spa']))}({active_boosts['spa']} stage boosted),") +
-            (f"Special defense:{active_stats['spd']}," if active_boosts['spd']==0 else f"Special defense:{round(active_stats['spd']*self.boost_multiplier('spd', active_boosts['spd']))}({active_boosts['spd']} stage boosted),") +
-            (f"Speed:{active_stats['spe']}" if active_boosts['spe']==0 else f"Speed:{round(active_stats['spe']*self.boost_multiplier('spe', active_boosts['spe']))}({active_boosts['spe']} stage boosted),") +
+            stats_str +
             (f"(slower than {battle.opponent_active_pokemon.species})." if active_speed < opponent_speed else f"(faster than {battle.opponent_active_pokemon.species}).") +
             (f"Ability:{active_ability}({ability_effect})," if ability_effect else f"Ability:{active_ability},") +
             (f"Item:{active_item}" if active_item else "")

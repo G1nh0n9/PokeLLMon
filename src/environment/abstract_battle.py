@@ -675,9 +675,20 @@ class AbstractBattle(ABC):
             elif "reconnected" in split_message[2]:
                 self._anybody_inactive = False
                 self._reconnected = True
+        elif split_message[1] == "l":
+            # Player left the battle
+            self._anybody_inactive = True
+        elif split_message[1] == "j":
+            # Player joined/rejoined the battle
+            self._anybody_inactive = False
+            self._reconnected = True
         elif split_message[1] == "player":
             if len(split_message) == 6:
                 player, username, avatar, rating = split_message[2:6]
+            elif len(split_message) == 4 and split_message[3] == '':
+                # Player reconnected message: |player|p2|
+                # Just ignore and return, this is a rejoin notification
+                return
             else:
                 if not self._anybody_inactive:
                     if self._reconnected:
@@ -751,6 +762,9 @@ class AbstractBattle(ABC):
             if pokemon.terastallized:
                 if pokemon in set(self.opponent_team.values()):
                     self._opponent_can_terrastallize = False
+        elif split_message[1] == "sentchoice":
+            # Server confirmation of player's choice, can be safely ignored
+            pass
         else:
             raise NotImplementedError(split_message)
 
