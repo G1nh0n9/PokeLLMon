@@ -4,6 +4,7 @@ from src.concurrency import POKE_LOOP
 from src.player import utils
 from src.player.baselines import MaxBasePowerPlayer, HeuristicsPlayer, RandomPlayer
 from src.player.gpt_player import LLMPlayer
+from src.player.pochamps_player import PochampsPlayer
 from src.player.battle_order import (
     BattleOrder,
     DefaultBattleOrder,
@@ -42,4 +43,6 @@ __all__ = [
     "DoubleBattleOrder",
     "MaxBasePowerPlayer",
     "HeuristicsPlayer",
+    "LLMPlayer",
+    "PochampsPlayer",
 ]

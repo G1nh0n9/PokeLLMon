@@ -101,7 +101,7 @@ class LLMPlayer(Player):
     def __init__(self,
                  battle_format,
                  api_key="",
-                 backend="gpt-4-1106-preview",
+                 backend="gpt-4-0613",
                  temperature=0.8,
                  prompt_algo="io",
                  log_dir=None,
