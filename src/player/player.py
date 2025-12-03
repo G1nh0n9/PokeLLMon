@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from asyncio import Condition, Event, Queue, Semaphore
 from logging import Logger
 from time import perf_counter
-from typing import Any, Awaitable, Dict, List, Optional, Union
+from typing import Any, Awaitable, Dict, List, Optional, Set, Union
 
 import orjson
 
@@ -55,6 +55,7 @@ class Player(ABC):
         battle_format: str = "gen9randombattle",
         log_level: Optional[int] = None,
         max_concurrent_battles: int = 1,
+        open_team_sheets: bool = False,
         save_replays: Union[bool, str] = False,
         server_configuration: Optional[ServerConfiguration] = None,
         start_timer_on_battle_start: bool = False,
@@ -126,6 +127,7 @@ class Player(ABC):
 
         self._format: str = battle_format
         self._max_concurrent_battles: int = max_concurrent_battles
+        self._open_team_sheets: bool = open_team_sheets
         self._save_replays = save_replays
         self._start_timer_on_battle_start: bool = start_timer_on_battle_start
 
@@ -140,6 +142,11 @@ class Player(ABC):
         self._challenge_queue: Queue[Any] = create_in_poke_loop(Queue)
         self._dynamax_disable=False
         self._boost_disable=False
+        
+        # Cleanup mode: when True, incoming battle init messages will be forfeited
+        # instead of creating new battles (used to clean up stale sessions on login)
+        self._cleanup_mode: bool = False
+        self._stale_battles_to_forfeit: Set[str] = set()
 
         if isinstance(team, Teambuilder):
             self._team = team
@@ -228,18 +235,26 @@ class Player(ABC):
         else:
             self._team = ConstantTeambuilder(team)
 
-    async def _create_battle(self, split_message: List[str]) -> AbstractBattle:
+    async def _create_battle(self, split_message: List[str]) -> Optional[AbstractBattle]:
         """Returns battle object corresponding to received message.
 
         :param split_message: The battle initialisation message.
         :type split_message: List[str]
-        :return: The corresponding battle object.
-        :rtype: AbstractBattle
+        :return: The corresponding battle object, or None if in cleanup mode.
+        :rtype: AbstractBattle or None
         """
         # We check that the battle has the correct format
         if split_message[1] == self._format and len(split_message) >= 2:
             # Battle initialisation
             battle_tag = "-".join(split_message)[1:]
+            
+            # If in cleanup mode, forfeit this stale battle instead of creating it
+            if self._cleanup_mode and battle_tag not in self._battles:
+                self.logger.info(f"[CLEANUP] Detected stale battle session: {battle_tag}, will forfeit")
+                self._stale_battles_to_forfeit.add(battle_tag)
+                # Send forfeit command immediately
+                await self.ps_client.forfeit_battle(battle_tag)
+                return None
 
             if battle_tag in self._battles:
                 return self._battles[battle_tag]
@@ -281,11 +296,17 @@ class Player(ABC):
             )
             raise ShowdownException()
 
-    async def _get_battle(self, battle_tag: str) -> AbstractBattle:
+    async def _get_battle(self, battle_tag: str) -> Optional[AbstractBattle]:
         battle_tag = battle_tag[1:]
+        # If this battle was forfeited during cleanup, return None
+        if battle_tag in self._stale_battles_to_forfeit:
+            return None
         while True:
             if battle_tag in self._battles:
                 return self._battles[battle_tag]
+            # Also check if it was added to stale list while waiting
+            if battle_tag in self._stale_battles_to_forfeit:
+                return None
             async with self._battle_start_condition:
                 await self._battle_start_condition.wait()
 
@@ -303,8 +324,14 @@ class Player(ABC):
         ):
             battle_info = split_messages[0][0].split("-")
             battle = await self._create_battle(battle_info)
+            # If battle is None (cleanup mode), skip processing
+            if battle is None:
+                return
         else:
             battle = await self._get_battle(split_messages[0][0])
+            # If battle is None (stale battle being cleaned up), skip processing
+            if battle is None:
+                return
 
         if len(split_messages) > 3:
             msg = split_messages[3:]
@@ -516,18 +543,49 @@ class Player(ABC):
 
                 idx += 1
 
+        # Check if this message block contains a 'turn' message
+        has_turn_message = any(
+            len(msg) > 1 and msg[1] == "turn" 
+            for msg in split_messages[1:]
+        )
+
+        # Process 'request' messages FIRST to populate battle.team before other handlers
         for split_message in split_messages[1:]:
             if len(split_message) <= 1:
                 continue
-            elif split_message[1] in self.MESSAGES_TO_IGNORE:
-                pass
-            elif split_message[1] == "request":
+            if split_message[1] == "request":
                 if split_message[2]:
                     request = orjson.loads(split_message[2])
                     battle.parse_request(request)
                     if battle.move_on_next_request:
                         await self._handle_battle_request(battle)
                         battle.move_on_next_request = False
+                    # If request comes without a turn message in this block,
+                    # we need to handle it. This happens when request and turn are in separate blocks.
+                    elif not has_turn_message and not battle.teampreview and battle.active_pokemon and request.get("active"):
+                        self.logger.warning("[DEBUG] Standalone request received (Turn %d), calling _handle_battle_request", battle.turn)
+                        await self._handle_battle_request(battle)
+
+        # Now process all other messages
+        for split_message in split_messages[1:]:
+            if len(split_message) <= 1:
+                continue
+            elif split_message[1] in self.MESSAGES_TO_IGNORE:
+                pass
+            elif split_message[1] == "request":
+                pass  # Already processed above
+            elif split_message[1] == "uhtml":
+                # Handle Open Team Sheets request - only during Team Preview
+                if len(split_message) >= 3 and split_message[2] == "otsrequest":
+                    # Only respond if we're still in Team Preview phase
+                    if battle.teampreview:
+                        if self._open_team_sheets:
+                            await self.ps_client.send_message("/acceptopenteamsheets", battle.battle_tag)
+                            self.logger.info("Accepted Open Team Sheets request")
+                        else:
+                            await self.ps_client.send_message("/rejectopenteamsheets", battle.battle_tag)
+                            self.logger.info("Rejected Open Team Sheets request (using Closed Team Sheets)")
+                # Other uhtml messages can be ignored
             elif split_message[1] == "win" or split_message[1] == "tie":
                 if split_message[1] == "win":
                     battle.won_by(split_message[2])
@@ -606,9 +664,11 @@ class Player(ABC):
                 else:
                     self.logger.critical("Unexpected error message: %s", split_message)
             elif split_message[1] == "turn":
+                self.logger.warning("[DEBUG] Received 'turn' message: %s", split_message)
                 battle.parse_message(split_message)
                 await self._handle_battle_request(battle)
             elif split_message[1] == "teampreview":
+                self.logger.warning("[DEBUG] Received 'teampreview' message")
                 battle.parse_message(split_message)
                 await self._handle_battle_request(battle, from_teampreview_request=True)
             elif split_message[1] == "bigerror":
@@ -622,18 +682,34 @@ class Player(ABC):
         from_teampreview_request: bool = False,
         maybe_default_order: bool = False,
     ):
+        self.logger.warning("[DEBUG] _handle_battle_request called: teampreview=%s, from_teampreview=%s", 
+                           battle.teampreview, from_teampreview_request)
         if maybe_default_order and random.random() < self.DEFAULT_CHOICE_CHANCE:
             message = self.choose_default_move().message
         elif battle.teampreview:
             if not from_teampreview_request:
+                self.logger.warning("[DEBUG] Skipping - not from teampreview request")
                 return
+            self.logger.warning("[DEBUG] Calling teampreview(), battle.team has %d pokemon: %s", 
+                               len(battle.team), list(battle.team.keys()))
             message = self.teampreview(battle)
+            # Support async teampreview (for GPT-based analysis)
+            if isinstance(message, Awaitable):
+                message = await message
+            # Check if Team Preview ended while we were waiting (e.g., GPT analysis took too long)
+            if not battle.teampreview:
+                self.logger.warning("Team Preview ended while analyzing, skipping team selection message")
+                return
+            self.logger.warning("[DEBUG] teampreview message: %s", message)
         else:
+            self.logger.warning("[DEBUG] Calling choose_move()")
             message = self.choose_move(battle)
             if isinstance(message, Awaitable):
                 message = await message
             message = message.message
+            self.logger.warning("[DEBUG] choose_move message: %s", message)
 
+        self.logger.warning("[DEBUG] Sending message to server: %s", message)
         await self.ps_client.send_message(message, battle.battle_tag)
 
     async def _handle_challenge_request(self, split_message: List[str]):
@@ -991,9 +1067,64 @@ class Player(ABC):
         :return: The random teampreview order.
         :rtype: str
         """
-        members = list(range(1, len(battle.team) + 1))
+        team_size = len(battle.team)
+        if team_size == 0:
+            # Team not yet populated - this should not happen but use fallback
+            self.logger.error("[BUG] Team is empty during teampreview! Using default 6.")
+            team_size = 6
+        members = list(range(1, team_size + 1))
         random.shuffle(members)
+        # For VGC/doubles, only select max_team_size pokemon (usually 4)
+        if battle.max_team_size:
+            members = members[:battle.max_team_size]
         return "/team " + "".join([str(c) for c in members])
+
+    async def forfeit_all_battles(self):
+        """Forfeit and leave all active battles.
+        
+        This sends /forfeit and /leave commands for each active battle to properly
+        clean up battle sessions on the server side.
+        """
+        for battle_tag in list(self._battles.keys()):
+            battle = self._battles.get(battle_tag)
+            if battle and not battle.finished:
+                self.logger.info(f"Forfeiting battle: {battle_tag}")
+                await self.ps_client.forfeit_battle(battle_tag)
+            else:
+                # Already finished, just leave the room
+                await self.ps_client.leave_battle(battle_tag)
+        self._battles = {}
+
+    async def cleanup_stale_sessions(self, wait_time: float = 2.0):
+        """Enable cleanup mode and wait for stale battle sessions to be forfeited.
+        
+        This method enables cleanup mode which will automatically forfeit any
+        battle sessions that the server tries to reconnect us to (stale sessions
+        from previous runs). After waiting for the specified time, cleanup mode
+        is disabled and normal battle creation resumes.
+        
+        :param wait_time: How long to wait for stale sessions (in seconds). 
+                         Defaults to 2.0 seconds.
+        :type wait_time: float
+        """
+        self.logger.info(f"[CLEANUP] Enabling cleanup mode for {wait_time}s to forfeit stale sessions...")
+        self._cleanup_mode = True
+        self._stale_battles_to_forfeit.clear()
+        
+        # Wait for the specified time to receive and forfeit any stale sessions
+        await asyncio.sleep(wait_time)
+        
+        # Disable cleanup mode
+        self._cleanup_mode = False
+        
+        # Log results
+        if self._stale_battles_to_forfeit:
+            self.logger.info(f"[CLEANUP] Forfeited {len(self._stale_battles_to_forfeit)} stale battle(s): {self._stale_battles_to_forfeit}")
+        else:
+            self.logger.info("[CLEANUP] No stale sessions detected.")
+        
+        # Clear the set for next time
+        self._stale_battles_to_forfeit.clear()
 
     def reset_battles(self):
         """Resets the player's inner battle tracker."""

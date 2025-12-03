@@ -56,8 +56,8 @@ class AbstractBattle(ABC):
         "resisted",
         "split",
         "supereffective",
-        "teampreview",
         "tier",
+        "uhtml",
         "upkeep",
         "zbroken",
     }
@@ -765,6 +765,11 @@ class AbstractBattle(ABC):
         elif split_message[1] == "sentchoice":
             # Server confirmation of player's choice, can be safely ignored
             pass
+        elif split_message[1] == "teampreview":
+            # Set teampreview flag and optionally parse max team size
+            self._teampreview = True
+            if len(split_message) > 2:
+                self._max_team_size = int(split_message[2])
         else:
             raise NotImplementedError(split_message)
 

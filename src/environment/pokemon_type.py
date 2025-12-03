@@ -32,6 +32,7 @@ class PokemonType(Enum):
     PSYCHIC = auto()
     ROCK = auto()
     STEEL = auto()
+    STELLAR = auto()  # Gen 9 Tera type
     WATER = auto()
     THREE_QUESTION_MARKS = auto()
 

@@ -27,6 +27,11 @@ class DoubleBattle(AbstractBattle):
             battle_tag, username, logger, save_replays, gen=gen
         )
 
+        # Message history (needed by player.py for battle logging)
+        self.battle_msg_history = ""
+        self.pokemon_hp_log_dict = {}
+        self.speed_list = []
+
         # Turn choice attributes
         self._available_moves: List[List[Move]] = [[], []]
         self._available_switches: List[List[Pokemon]] = [[], []]
@@ -188,9 +193,10 @@ class DoubleBattle(AbstractBattle):
                     self._can_z_move[active_pokemon_number] = True
                 if active_request.get("canDynamax", False):
                     self._can_dynamax[active_pokemon_number] = True
-                if active_request.get("canTerastallize", False):
+                tera_type = active_request.get("canTerastallize")
+                if tera_type and isinstance(tera_type, str):
                     self._can_tera[active_pokemon_number] = PokemonType.from_name(
-                        active_request["canTerastallize"]
+                        tera_type
                     )
                 if active_request.get("maybeTrapped", False):
                     self._maybe_trapped[active_pokemon_number] = True

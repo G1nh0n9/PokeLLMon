@@ -97,6 +97,23 @@ class Client:
         await self.set_team(packed_team)
         await self.send_message(f"/challenge {username}, {format_}")
 
+    async def forfeit_battle(self, battle_tag: str):
+        """Forfeit and leave an active battle.
+        
+        :param battle_tag: The battle tag (e.g., 'battle-gen9vgc2025regh-123')
+        :type battle_tag: str
+        """
+        await self.send_message("/forfeit", battle_tag)
+        await self.send_message("/leave", battle_tag)
+
+    async def leave_battle(self, battle_tag: str):
+        """Leave a battle room (for finished battles).
+        
+        :param battle_tag: The battle tag
+        :type battle_tag: str
+        """
+        await self.send_message("/leave", battle_tag)
+
     def _create_logger(self, log_level: Optional[int]) -> Logger:
         """Creates a logger for the client.
 
@@ -219,7 +236,10 @@ class Client:
             ) as websocket:
                 self.websocket = websocket
                 async for message in websocket:
-                    self.logger.info("\033[92m\033[1m<<<\033[0m %s", message)
+                    # Log to player-specific file
+                    log_filename = f"server_{self.username.replace(' ', '_')}.log"
+                    with open(log_filename, "a") as f:
+                        f.write(message + "\n")
                     task = create_task(self._handle_message(str(message)))
                     self._active_tasks.add(task)
                     task.add_done_callback(self._active_tasks.discard)
@@ -284,6 +304,10 @@ class Client:
             to_send = "|".join([room, message, message_2])
         else:
             to_send = "|".join([room, message])
+        # Log sent message to player-specific file
+        log_filename = f"server_{self.username.replace(' ', '_')}.log"
+        with open(log_filename, "a") as f:
+            f.write(f">>> SEND: {to_send}\n")
         await self.websocket.send(to_send)
 
     async def set_team(self, packed_team: Optional[str]):

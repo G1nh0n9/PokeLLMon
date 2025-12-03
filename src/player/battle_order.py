@@ -8,7 +8,7 @@ from src.environment.pokemon import Pokemon
 
 @dataclass
 class BattleOrder:
-    order: Optional[Union[Move, Pokemon]]
+    order: Optional[Union[Move, Pokemon, str]]
     mega: bool = False
     z_move: bool = False
     dynamax: bool = False
@@ -41,6 +41,8 @@ class BattleOrder:
             return message
         elif isinstance(self.order, Pokemon):
             return f"/choose switch {self.order.species}"
+        elif isinstance(self.order, str):
+            return self.order
         else:
             return ""
 

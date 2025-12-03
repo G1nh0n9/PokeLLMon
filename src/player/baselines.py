@@ -12,7 +12,10 @@ from src.data.gen_data import GenData
 from src.player.battle_order import BattleOrder
 
 
-with open("./data/static/moves/moves_effect.json", "r") as f:
+# Load moves effect with proper path resolution
+_module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_moves_effect_path = os.path.join(_module_dir, "data", "static", "moves", "moves_effect.json")
+with open(_moves_effect_path, "r") as f:
     move_effect = json.load(f)
 
 
@@ -107,9 +110,36 @@ class HeuristicsPlayer(Player):
 
     ANTI_HAZARDS_MOVES = {"rapidspin", "defog"}
 
+    def __init__(self, open_team_sheets: bool = False, **kwargs):
+        super().__init__(open_team_sheets=open_team_sheets, **kwargs)
+
     SPEED_TIER_COEFICIENT = 0.1
     HP_FRACTION_COEFICIENT = 0.4
     SWITCH_OUT_MATCHUP_THRESHOLD = -2
+
+    def teampreview(self, battle: AbstractBattle) -> str:
+        """
+        Team Preview - 배틀 형식에 맞는 랜덤 선발.
+        
+        VGC/Doubles: 6마리 중 4마리 선택 (max_team_size 사용)
+        Singles: 모든 포켓몬 순서만 결정
+        """
+        import random
+        
+        # 팀 사이즈 결정
+        team_size = len(battle.team) if battle.team else 6
+        
+        # 선택할 포켓몬 수 (VGC는 보통 4마리)
+        select_count = battle.max_team_size if battle.max_team_size else team_size
+        
+        # 랜덤 순서 생성
+        members = list(range(1, team_size + 1))
+        random.shuffle(members)
+        
+        # 필요한 수만큼만 선택
+        selected = members[:select_count]
+        
+        return "/team " + "".join([str(c) for c in selected])
 
     def _estimate_matchup(self, mon: Pokemon, opponent: Pokemon):
         score = max([opponent.damage_multiplier(t) for t in mon.types if t is not None])
