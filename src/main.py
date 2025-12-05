@@ -21,8 +21,18 @@ from src.player import LLMPlayer, HeuristicsPlayer, PochampsPlayer
 from src.data.pochamps_teams import get_random_teams
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--backend", type=str, default="gpt-4o-2024-08-06", choices=["gpt-4o-2024-08-06"])
+# Model configuration
+parser.add_argument("--backend", type=str, default="gpt-4o-2024-08-06",
+                    help="Main model for normal strategy (e.g., gpt-4o-2024-08-06, gpt-oss-20b)")
+parser.add_argument("--fast_model", type=str, default=None,
+                    help="Model for fast strategy (default: same as backend)")
+parser.add_argument("--deep_model", type=str, default=None,
+                    help="Model for deep strategy (default: same as backend)")
+parser.add_argument("--base_url", type=str, default=None,
+                    help="Custom API base URL for local OSS models (e.g., http://localhost:8080)")
 parser.add_argument("--temperature", type=float, default=0.8)
+
+# Battle configuration
 parser.add_argument("--log_dir", type=str, default="./battle_log/pokellmon_vs_bot")
 parser.add_argument("--n_battles", type=int, default=5, help="Number of battles to run")
 parser.add_argument("--change_team_every_battle", action="store_true", 
@@ -76,7 +86,11 @@ async def main():
     print(f"  - Change teams every battle: {args.change_team_every_battle}")
     print(f"  - Open Team Sheets (OTS): {args.open_team_sheets}")
     print(f"  - Debug mode: {args.debug}")
-    print(f"  - Backend: {args.backend}")
+    print(f"Model Configuration:")
+    print(f"  - Backend (Normal): {args.backend}")
+    print(f"  - Fast Model: {args.fast_model or args.backend}")
+    print(f"  - Deep Model: {args.deep_model or args.backend}")
+    print(f"  - Base URL: {args.base_url or 'OpenAI default'}")
     print(f"{'='*60}\n")
     
     # Debug mode: override settings
@@ -89,6 +103,9 @@ async def main():
     pochamps_player = PochampsPlayer(battle_format=battle_format,
                                      api_key=os.getenv("OPENAI_API_KEY"),
                                      backend=args.backend,
+                                     fast_model=args.fast_model,
+                                     deep_model=args.deep_model,
+                                     base_url=args.base_url,
                                      temperature=args.temperature,
                                      log_dir=args.log_dir,
                                      save_replays=args.log_dir,

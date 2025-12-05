@@ -90,12 +90,17 @@ def call_fast_strategy(
         fast_system_prompt = """You are a Pokemon VGC doubles AI. Make a quick tactical decision.
 Prioritize: type advantage, immediate threats, protect predictions.
 
+CRITICAL TARGET RULES:
+- 1 = attack opponent's LEFT Pokemon
+- 2 = attack opponent's RIGHT Pokemon  
+- 0 = spread/field moves (Earthquake, Protect, etc.)
+- NEVER use -1 or -2 for attacking moves (those target allies/self for support only)
+
 RESPONSE FORMAT:
 {
-    "slot1": {"action": "move", "move": "<move_id>", "target": <1|2|-1|-2|0>},
-    "slot2": {"action": "move", "move": "<move_id>", "target": <1|2|-1|-2|0>}
-}
-Targets: 1=opp left, 2=opp right, -1=ally, -2=self, 0=spread/self"""
+    "slot1": {"action": "move", "move": "<move_id>", "target": <1|2|0>},
+    "slot2": {"action": "move", "move": "<move_id>", "target": <1|2|0>}
+}"""
         
         request_params = {
             "model": model,
@@ -429,18 +434,30 @@ def _build_normal_system_prompt() -> str:
     return """You are a Pokemon VGC doubles battle AI.
 Analyze the battle state and choose optimal actions for both Pokemon.
 
+CRITICAL TARGET RULES FOR ATTACKING MOVES:
+- 1 = opponent's LEFT slot (position 1)
+- 2 = opponent's RIGHT slot (position 2)
+- 0 = spread moves (hits both opponents) or self-targeting moves (Protect)
+- NEVER target your ally (-1) with damaging moves! That attacks your own Pokemon!
+- Only use -1 for support moves like Heal Pulse, Helping Hand (but those usually auto-target)
+
 Use function calling to:
 - calculate_damage: Check if you can KO or deal significant damage
-- evaluate_speed_tie: Determine who moves first
-- calculate_matchup_outcome: Evaluate overall matchup
+- check_speed_order: Determine who moves first
+- get_tera_matchup: Check tera type advantages
 
 RESPONSE FORMAT (JSON):
 {
-    "slot1": {"action": "move", "move": "<move_id>", "target": <target_int>},
-    "slot2": {"action": "switch", "pokemon": "<species>"}
+    "slot1": {"action": "move", "move": "<move_id>", "target": <1|2|0>},
+    "slot2": {"action": "move", "move": "<move_id>", "target": <1|2|0>}
 }
 
-Target indices: 1=opponent left, 2=opponent right, -1=ally, -2=self, 0=no target
+For switches:
+{
+    "slot1": {"action": "switch", "pokemon": "<species>"},
+    "slot2": {"action": "move", "move": "<move_id>", "target": <1|2|0>}
+}
+
 Optional: "terastallize": true"""
 
 
@@ -496,6 +513,17 @@ def _build_deep_system_prompt() -> str:
     """Build system prompt for deep strategy."""
     return """You are an expert Pokemon VGC doubles battle AI performing deep analysis.
 
+CRITICAL: TARGET RULES (MUST FOLLOW)
+=====================================
+For ATTACKING moves (Physical/Special):
+- target: 1 = opponent's LEFT Pokemon
+- target: 2 = opponent's RIGHT Pokemon
+- target: 0 = spread moves that hit multiple targets
+
+NEVER USE target: -1 FOR ATTACKING MOVES!
+-1 means "ally" and will attack your own partner Pokemon!
+-2 means "self" - only for moves like Protect, Swords Dance
+
 ANALYSIS FRAMEWORK:
 1. Speed Tier Analysis: Who moves first? Consider Tailwind, paralysis, abilities
 2. Damage Calculation: Can we KO? Can they KO us? Use function calling
@@ -503,20 +531,18 @@ ANALYSIS FRAMEWORK:
 4. Prediction: What will opponent likely do? Protect patterns, switch patterns
 5. Risk Assessment: Downside of each option if opponent does X/Y/Z
 
-Use function calling extensively:
+Use function calling:
 - calculate_damage: Verify KO thresholds
-- evaluate_speed_tie: Confirm speed order
-- calculate_matchup_outcome: Overall matchup score
-- calculate_win_probability: Win chance analysis
+- check_speed_order: Confirm speed order with field effects
+- get_tera_matchup: Check type changes from Terastallization
 
 RESPONSE FORMAT (JSON):
 {
-    "slot1": {"action": "move", "move": "<move_id>", "target": <target_int>},
-    "slot2": {"action": "move", "move": "<move_id>", "target": <target_int>}
+    "slot1": {"action": "move", "move": "<move_id>", "target": <1|2|0>},
+    "slot2": {"action": "move", "move": "<move_id>", "target": <1|2|0>}
 }
 
-Target indices: 1=opponent left, 2=opponent right, -1=ally, -2=self, 0=no target
-Optional flags: "terastallize": true"""
+Optional: "terastallize": true for Terastallizing"""
 
 
 def _build_deep_prompt(context: Dict) -> str:
