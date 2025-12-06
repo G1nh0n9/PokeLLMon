@@ -24,50 +24,51 @@ from typing import Dict, List, Optional, Any
 # These tools are OPTIMIZED for battle - no redundant basic info requests
 # All basic Pokemon data should already be in context from team preview cache
 
+# Responses API format: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
+# NOT Chat Completions format: {"type": "function", "function": {"name": "...", ...}}
+
 BATTLE_TOOLS = [
     # =========================================================================
     # 1. Damage Calculation - Most critical battle tool
     # =========================================================================
     {
         "type": "function",
-        "function": {
-            "name": "calculate_damage",
-            "description": "Calculate damage range for a specific attack. Use when you need precise damage numbers to determine if you can KO or survive. Returns min/max damage percentages.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "attacker": {
-                        "type": "string",
-                        "description": "Attacking Pokemon name"
-                    },
-                    "defender": {
-                        "type": "string",
-                        "description": "Defending Pokemon name"
-                    },
-                    "move": {
-                        "type": "string",
-                        "description": "Move being used"
-                    },
-                    "attacker_tera_type": {
-                        "type": "string",
-                        "description": "Attacker's Tera type if terastallized (optional)"
-                    },
-                    "defender_tera_type": {
-                        "type": "string",
-                        "description": "Defender's Tera type if terastallized (optional)"
-                    },
-                    "field_conditions": {
-                        "type": "object",
-                        "description": "Current field conditions (optional)",
-                        "properties": {
-                            "weather": {"type": "string"},
-                            "terrain": {"type": "string"},
-                            "screens": {"type": "array", "items": {"type": "string"}}
-                        }
-                    }
+        "name": "calculate_damage",
+        "description": "Calculate damage range for a specific attack. Use when you need precise damage numbers to determine if you can KO or survive. Returns min/max damage percentages.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "attacker": {
+                    "type": "string",
+                    "description": "Attacking Pokemon name"
                 },
-                "required": ["attacker", "defender", "move"]
-            }
+                "defender": {
+                    "type": "string",
+                    "description": "Defending Pokemon name"
+                },
+                "move": {
+                    "type": "string",
+                    "description": "Move being used"
+                },
+                "attacker_tera_type": {
+                    "type": "string",
+                    "description": "Attacker's Tera type if terastallized (optional)"
+                },
+                "defender_tera_type": {
+                    "type": "string",
+                    "description": "Defender's Tera type if terastallized (optional)"
+                },
+                "field_conditions": {
+                    "type": "object",
+                    "description": "Current field conditions (optional)",
+                    "properties": {
+                        "weather": {"type": "string"},
+                        "terrain": {"type": "string"},
+                        "screens": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            },
+            "required": ["attacker", "defender", "move"]
         }
     },
     
@@ -76,33 +77,31 @@ BATTLE_TOOLS = [
     # =========================================================================
     {
         "type": "function",
-        "function": {
-            "name": "get_tera_matchup",
-            "description": "Calculate how terastallization changes type matchup. Use when opponent has terastallized or you're considering tera. Returns new weaknesses/resistances.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pokemon": {
-                        "type": "string",
-                        "description": "Pokemon name"
-                    },
-                    "original_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Pokemon's original types before tera"
-                    },
-                    "tera_type": {
-                        "type": "string",
-                        "description": "The Tera type"
-                    },
-                    "attacking_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Types you want to check effectiveness against (optional)"
-                    }
+        "name": "get_tera_matchup",
+        "description": "Calculate how terastallization changes type matchup. Use when opponent has terastallized or you're considering tera. Returns new weaknesses/resistances.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pokemon": {
+                    "type": "string",
+                    "description": "Pokemon name"
                 },
-                "required": ["pokemon", "tera_type"]
-            }
+                "original_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Pokemon's original types before tera"
+                },
+                "tera_type": {
+                    "type": "string",
+                    "description": "The Tera type"
+                },
+                "attacking_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Types you want to check effectiveness against (optional)"
+                }
+            },
+            "required": ["pokemon", "tera_type"]
         }
     },
     
@@ -111,29 +110,27 @@ BATTLE_TOOLS = [
     # =========================================================================
     {
         "type": "function",
-        "function": {
-            "name": "check_speed_order",
-            "description": "Determine turn order considering CURRENT field/stat modifiers. Use when Tailwind, Trick Room, or stat changes affect speed.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pokemon_list": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of active Pokemon to compare"
-                    },
-                    "trick_room": {
-                        "type": "boolean",
-                        "description": "Is Trick Room active?"
-                    },
-                    "tailwind_sides": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Which sides have Tailwind? ['my_side', 'opponent_side']"
-                    }
+        "name": "check_speed_order",
+        "description": "Determine turn order considering CURRENT field/stat modifiers. Use when Tailwind, Trick Room, or stat changes affect speed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pokemon_list": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of active Pokemon to compare"
                 },
-                "required": ["pokemon_list"]
-            }
+                "trick_room": {
+                    "type": "boolean",
+                    "description": "Is Trick Room active?"
+                },
+                "tailwind_sides": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Which sides have Tailwind? ['my_side', 'opponent_side']"
+                }
+            },
+            "required": ["pokemon_list"]
         }
     },
     
@@ -142,33 +139,31 @@ BATTLE_TOOLS = [
     # =========================================================================
     {
         "type": "function",
-        "function": {
-            "name": "update_pokemon_prediction",
-            "description": "Update predictions after observing new information. Use when you've confirmed item, ability, or specific move usage. Returns revised probability distributions.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pokemon": {
-                        "type": "string",
-                        "description": "Pokemon name"
-                    },
-                    "observed": {
-                        "type": "object",
-                        "description": "What was observed",
-                        "properties": {
-                            "item": {"type": "string"},
-                            "ability": {"type": "string"},
-                            "move": {"type": "string"},
-                            "tera_type": {"type": "string"},
-                            "speed_relation": {
-                                "type": "string",
-                                "description": "e.g., 'faster_than:rillaboom' or 'slower_than:tornadus'"
-                            }
+        "name": "update_pokemon_prediction",
+        "description": "Update predictions after observing new information. Use when you've confirmed item, ability, or specific move usage. Returns revised probability distributions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pokemon": {
+                    "type": "string",
+                    "description": "Pokemon name"
+                },
+                "observed": {
+                    "type": "object",
+                    "description": "What was observed",
+                    "properties": {
+                        "item": {"type": "string"},
+                        "ability": {"type": "string"},
+                        "move": {"type": "string"},
+                        "tera_type": {"type": "string"},
+                        "speed_relation": {
+                            "type": "string",
+                            "description": "e.g., 'faster_than:rillaboom' or 'slower_than:tornadus'"
                         }
                     }
-                },
-                "required": ["pokemon", "observed"]
-            }
+                }
+            },
+            "required": ["pokemon", "observed"]
         }
     },
     
@@ -177,24 +172,22 @@ BATTLE_TOOLS = [
     # =========================================================================
     {
         "type": "function",
-        "function": {
-            "name": "query_cached_info",
-            "description": "Retrieve cached Pokemon info from team preview analysis. Use ONLY if specific data isn't in your context. Avoid calling for info already provided.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pokemon": {
-                        "type": "string",
-                        "description": "Pokemon name to query"
-                    },
-                    "info_type": {
-                        "type": "string",
-                        "enum": ["usage_stats", "base_stats", "common_moves", "common_items", "speed_tier"],
-                        "description": "Type of information needed"
-                    }
+        "name": "query_cached_info",
+        "description": "Retrieve cached Pokemon info from team preview analysis. Use ONLY if specific data isn't in your context. Avoid calling for info already provided.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pokemon": {
+                    "type": "string",
+                    "description": "Pokemon name to query"
                 },
-                "required": ["pokemon", "info_type"]
-            }
+                "info_type": {
+                    "type": "string",
+                    "enum": ["usage_stats", "base_stats", "common_moves", "common_items", "speed_tier"],
+                    "description": "Type of information needed"
+                }
+            },
+            "required": ["pokemon", "info_type"]
         }
     }
 ]
@@ -779,13 +772,13 @@ class ToolExecutor:
 
 def get_tool_names() -> List[str]:
     """Get list of available tool names."""
-    return [tool["function"]["name"] for tool in BATTLE_TOOLS]
+    return [tool["name"] for tool in BATTLE_TOOLS]
 
 
 def get_tool_by_name(name: str) -> Optional[Dict]:
     """Get tool definition by name."""
     for tool in BATTLE_TOOLS:
-        if tool["function"]["name"] == name:
+        if tool["name"] == name:
             return tool
     return None
 
@@ -794,8 +787,7 @@ def get_battle_tools_summary() -> str:
     """Get a summary of available battle tools for debugging."""
     summary = []
     for tool in BATTLE_TOOLS:
-        func = tool["function"]
-        summary.append(f"- {func['name']}: {func['description'][:50]}...")
+        summary.append(f"- {tool['name']}: {tool['description'][:50]}...")
     return "\n".join(summary)
 
 

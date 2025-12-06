@@ -446,6 +446,10 @@ class Pokemon:
         details = request_pokemon["details"]
         self._update_from_details(details)
 
+        # Parse teraType from request (always available for own Pokemon)
+        if "teraType" in request_pokemon:
+            self._terastallized_type = PokemonType.from_name(request_pokemon["teraType"])
+
         for move in request_pokemon["moves"]:
             self._add_move(move)
 

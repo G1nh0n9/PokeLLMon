@@ -684,6 +684,28 @@ class Player(ABC):
     ):
         self.logger.debug("_handle_battle_request called: teampreview=%s, from_teampreview=%s", 
                            battle.teampreview, from_teampreview_request)
+        
+        # =========================================================================
+        # GUARD: Prevent duplicate handling for the same turn/request
+        # This can happen when 'request' and 'turn' messages arrive in separate blocks
+        # =========================================================================
+        if not battle.teampreview:
+            # Track the last handled request state for each battle
+            # Use a tuple of (turn, force_switch) as the key to detect same request
+            current_request_key = (
+                battle.turn,
+                tuple(getattr(battle, 'force_switch', [False, False]) or [False, False])
+            )
+            last_key = getattr(battle, '_last_handled_request_key', None)
+            
+            if last_key == current_request_key:
+                self.logger.debug("Skipping duplicate request for turn %d (force_switch=%s)", 
+                                   battle.turn, current_request_key[1])
+                return
+            
+            # Mark this request as being handled
+            battle._last_handled_request_key = current_request_key
+        
         if maybe_default_order and random.random() < self.DEFAULT_CHOICE_CHANCE:
             message = self.choose_default_move().message
         elif battle.teampreview:

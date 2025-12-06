@@ -83,17 +83,50 @@ class DoubleBattleOrder(BattleOrder):
 
     @staticmethod
     def join_orders(first_orders: List[BattleOrder], second_orders: List[BattleOrder]):
+        """Join two lists of orders into DoubleBattleOrder combinations.
+        
+        Filters out invalid combinations:
+        - Both using mega/z-move/dynamax/terastallize
+        - Both switching to the same Pokemon
+        """
+        def is_switch_order(order: BattleOrder) -> bool:
+            """Check if this order is a switch (Pokemon object, not Move)."""
+            # Pokemon is already imported at module level
+            return isinstance(order.order, Pokemon)
+        
+        def get_switch_species(order: BattleOrder) -> Optional[str]:
+            """Get species name if this is a switch order."""
+            if is_switch_order(order):
+                return order.order.species
+            return None
+        
         if first_orders and second_orders:
-            orders = [
-                DoubleBattleOrder(first_order=first_order, second_order=second_order)
-                for first_order in first_orders
-                for second_order in second_orders
-                if not first_order.mega or not second_order.mega
-                if not first_order.z_move or not second_order.z_move
-                if not first_order.dynamax or not second_order.dynamax
-                if not first_order.terastallize or not second_order.terastallize
-                if first_order.order != second_order.order
-            ]
+            orders = []
+            for first_order in first_orders:
+                for second_order in second_orders:
+                    # Skip invalid combinations
+                    if first_order.mega and second_order.mega:
+                        continue
+                    if first_order.z_move and second_order.z_move:
+                        continue
+                    if first_order.dynamax and second_order.dynamax:
+                        continue
+                    if first_order.terastallize and second_order.terastallize:
+                        continue
+                    
+                    # Skip if both orders reference the exact same object
+                    if first_order.order is second_order.order:
+                        continue
+                    
+                    # Skip if both orders are switches to the same Pokemon
+                    # This prevents "Can't switch to an active Pokemon" error
+                    first_species = get_switch_species(first_order)
+                    second_species = get_switch_species(second_order)
+                    if first_species and second_species and first_species == second_species:
+                        continue
+                    
+                    orders.append(DoubleBattleOrder(first_order=first_order, second_order=second_order))
+            
             if orders:
                 return orders
         elif first_orders:
