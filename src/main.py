@@ -7,10 +7,18 @@ import argparse
 import sys
 import io
 import random
+import logging
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
+
+# Configure global logging - INFO level for clean output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 # Fix Windows console encoding issue for Unicode characters
 if sys.platform == 'win32':

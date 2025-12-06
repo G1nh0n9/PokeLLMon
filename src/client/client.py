@@ -238,7 +238,7 @@ class Client:
                 async for message in websocket:
                     # Log to player-specific file
                     log_filename = f"server_{self.username.replace(' ', '_')}.log"
-                    with open(log_filename, "a") as f:
+                    with open(log_filename, "a", encoding="utf-8") as f:
                         f.write(message + "\n")
                     task = create_task(self._handle_message(str(message)))
                     self._active_tasks.add(task)

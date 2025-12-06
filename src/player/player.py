@@ -563,7 +563,7 @@ class Player(ABC):
                     # If request comes without a turn message in this block,
                     # we need to handle it. This happens when request and turn are in separate blocks.
                     elif not has_turn_message and not battle.teampreview and battle.active_pokemon and request.get("active"):
-                        self.logger.warning("[DEBUG] Standalone request received (Turn %d), calling _handle_battle_request", battle.turn)
+                        self.logger.debug("Standalone request received (Turn %d), calling _handle_battle_request", battle.turn)
                         await self._handle_battle_request(battle)
 
         # Now process all other messages
@@ -664,11 +664,11 @@ class Player(ABC):
                 else:
                     self.logger.critical("Unexpected error message: %s", split_message)
             elif split_message[1] == "turn":
-                self.logger.warning("[DEBUG] Received 'turn' message: %s", split_message)
+                self.logger.debug("Received 'turn' message: %s", split_message)
                 battle.parse_message(split_message)
                 await self._handle_battle_request(battle)
             elif split_message[1] == "teampreview":
-                self.logger.warning("[DEBUG] Received 'teampreview' message")
+                self.logger.debug("Received 'teampreview' message")
                 battle.parse_message(split_message)
                 await self._handle_battle_request(battle, from_teampreview_request=True)
             elif split_message[1] == "bigerror":
@@ -682,15 +682,15 @@ class Player(ABC):
         from_teampreview_request: bool = False,
         maybe_default_order: bool = False,
     ):
-        self.logger.warning("[DEBUG] _handle_battle_request called: teampreview=%s, from_teampreview=%s", 
+        self.logger.debug("_handle_battle_request called: teampreview=%s, from_teampreview=%s", 
                            battle.teampreview, from_teampreview_request)
         if maybe_default_order and random.random() < self.DEFAULT_CHOICE_CHANCE:
             message = self.choose_default_move().message
         elif battle.teampreview:
             if not from_teampreview_request:
-                self.logger.warning("[DEBUG] Skipping - not from teampreview request")
+                self.logger.debug("Skipping - not from teampreview request")
                 return
-            self.logger.warning("[DEBUG] Calling teampreview(), battle.team has %d pokemon: %s", 
+            self.logger.debug("Calling teampreview(), battle.team has %d pokemon: %s", 
                                len(battle.team), list(battle.team.keys()))
             message = self.teampreview(battle)
             # Support async teampreview (for GPT-based analysis)
@@ -700,16 +700,17 @@ class Player(ABC):
             if not battle.teampreview:
                 self.logger.warning("Team Preview ended while analyzing, skipping team selection message")
                 return
-            self.logger.warning("[DEBUG] teampreview message: %s", message)
+            self.logger.info("[TEAM SELECTION] Submitting: %s", message)
+            self.logger.debug("teampreview message: %s", message)
         else:
-            self.logger.warning("[DEBUG] Calling choose_move()")
+            self.logger.debug("Calling choose_move()")
             message = self.choose_move(battle)
             if isinstance(message, Awaitable):
                 message = await message
             message = message.message
-            self.logger.warning("[DEBUG] choose_move message: %s", message)
+            self.logger.debug("choose_move message: %s", message)
 
-        self.logger.warning("[DEBUG] Sending message to server: %s", message)
+        self.logger.debug("Sending message to server: %s", message)
         await self.ps_client.send_message(message, battle.battle_tag)
 
     async def _handle_challenge_request(self, split_message: List[str]):
@@ -762,8 +763,6 @@ class Player(ABC):
         if packed_team is None:
             packed_team = self.next_team
 
-        import logging
-        logging.warning("AAAHHH in accept_challenges")
         await handle_threaded_coroutines(
             self._accept_challenges(opponent, n_challenges, packed_team)
         )
@@ -774,8 +773,6 @@ class Player(ABC):
         n_challenges: int,
         packed_team: Optional[str],
     ):
-        import logging
-        logging.warning("AAAHHH in _accept_challenges")
         if opponent:
             if isinstance(opponent, list):
                 opponent = [to_id_str(o) for o in opponent]

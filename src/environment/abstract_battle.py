@@ -1162,6 +1162,13 @@ class AbstractBattle(ABC):
         :param turn: Current turn value.
         :type turn: int
         """
+        # Log when turn 1 starts (teampreview ended)
+        if turn == 1 and self._turn == 0 and self._teampreview:
+            self._teampreview = False
+            if self.logger:
+                team_names = [mon.species for mon in self.team.values()]
+                self.logger.info(f"[SERVER RECOGNIZED] Team registered: {', '.join(team_names)}")
+        
         self._turn = turn
 
     @property
