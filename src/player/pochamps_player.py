@@ -20,6 +20,7 @@ from src.player.player import Player, BattleOrder
 from src.player.battle_order import DoubleBattleOrder, ForfeitBattleOrder
 from src.player.functions import BATTLE_TOOLS, ToolExecutor, TeamPreviewCache
 from src.player.strategies import call_fast_strategy, call_normal_strategy, call_deep_strategy
+from src.player import pkhex_core
 
 
 # =============================================================================
@@ -4002,81 +4003,31 @@ You have access to tools for additional information. Use them if needed:
         
         if tool_name == "get_pokemon_info":
             generation = args.get("generation", 9)
-            pokemon = args.get("pokemon", "").lower().replace(" ", "")
-            # TODO: generation별 pokedex 분기 처리
-            # 현재는 하드코딩된 샘플 데이터 반환
-            pokemon_db = {
-                "incineroar": {
-                    "species": "Incineroar",
-                    "types": ["Fire", "Dark"],
-                    "baseStats": {"hp": 95, "atk": 115, "def": 90, "spa": 80, "spd": 90, "spe": 60},
-                    "abilities": {"0": "Blaze", "H": "Intimidate"}
-                },
-                "rillaboom": {
-                    "species": "Rillaboom",
-                    "types": ["Grass"],
-                    "baseStats": {"hp": 100, "atk": 125, "def": 90, "spa": 60, "spd": 70, "spe": 85},
-                    "abilities": {"0": "Overgrow", "H": "Grassy Surge"}
-                },
-                "urshifu": {
-                    "species": "Urshifu",
-                    "types": ["Fighting", "Dark"],
-                    "baseStats": {"hp": 100, "atk": 130, "def": 100, "spa": 63, "spd": 60, "spe": 97},
-                    "abilities": {"0": "Unseen Fist"}
-                },
-                "urshifurapidstrike": {
-                    "species": "Urshifu-Rapid-Strike",
-                    "types": ["Fighting", "Water"],
-                    "baseStats": {"hp": 100, "atk": 130, "def": 100, "spa": 63, "spd": 60, "spe": 97},
-                    "abilities": {"0": "Unseen Fist"}
-                },
-                "miraidon": {
-                    "species": "Miraidon",
-                    "types": ["Electric", "Dragon"],
-                    "baseStats": {"hp": 100, "atk": 85, "def": 100, "spa": 135, "spd": 115, "spe": 135},
-                    "abilities": {"0": "Hadron Engine"}
-                },
-                "koraidon": {
-                    "species": "Koraidon",
-                    "types": ["Fighting", "Dragon"],
-                    "baseStats": {"hp": 100, "atk": 135, "def": 115, "spa": 85, "spd": 100, "spe": 135},
-                    "abilities": {"0": "Orichalcum Pulse"}
-                },
-                "fluttermane": {
-                    "species": "Flutter Mane",
-                    "types": ["Ghost", "Fairy"],
-                    "baseStats": {"hp": 55, "atk": 55, "def": 55, "spa": 135, "spd": 135, "spe": 135},
-                    "abilities": {"0": "Protosynthesis"}
-                },
-                "chienpao": {
-                    "species": "Chien-Pao",
-                    "types": ["Dark", "Ice"],
-                    "baseStats": {"hp": 80, "atk": 120, "def": 80, "spa": 90, "spd": 65, "spe": 135},
-                    "abilities": {"0": "Sword of Ruin"}
-                },
-                "landorus": {
-                    "species": "Landorus",
-                    "types": ["Ground", "Flying"],
-                    "baseStats": {"hp": 89, "atk": 125, "def": 90, "spa": 115, "spd": 80, "spe": 101},
-                    "abilities": {"0": "Sand Force", "H": "Sheer Force"}
-                },
-                "amoonguss": {
-                    "species": "Amoonguss",
-                    "types": ["Grass", "Poison"],
-                    "baseStats": {"hp": 114, "atk": 85, "def": 70, "spa": 85, "spd": 80, "spe": 30},
-                    "abilities": {"0": "Effect Spore", "H": "Regenerator"}
-                }
-            }
-            
-            if pokemon in pokemon_db:
-                return pokemon_db[pokemon]
-            else:
+            pokemon = args.get("pokemon", "")
+
+            # PKHeX Core를 통해 실제 포켓몬 데이터 가져오기
+            try:
+                pokemon_data = pkhex_core.get_pokemon_info(pokemon, language="en")
+
+                if pokemon_data:
+                    return pokemon_data
+                else:
+                    # 포켓몬을 찾지 못한 경우 기본값 반환
+                    return {
+                        "species": pokemon,
+                        "types": ["Unknown"],
+                        "baseStats": {"hp": 80, "atk": 80, "def": 80, "spa": 80, "spd": 80, "spe": 80},
+                        "abilities": {},
+                        "note": "No detailed data available for this Pokemon"
+                    }
+            except Exception as e:
+                # PKHeX Core 오류 발생 시 기본값 반환
                 return {
                     "species": pokemon,
                     "types": ["Unknown"],
                     "baseStats": {"hp": 80, "atk": 80, "def": 80, "spa": 80, "spd": 80, "spe": 80},
                     "abilities": {},
-                    "note": "No detailed data available for this Pokemon"
+                    "note": f"Error retrieving Pokemon data: {str(e)}"
                 }
         
         elif tool_name == "get_move_info":
