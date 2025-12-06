@@ -20,6 +20,7 @@ from src.player.player import Player, BattleOrder
 from src.player.battle_order import DoubleBattleOrder, ForfeitBattleOrder
 from src.player.functions import BATTLE_TOOLS, ToolExecutor, TeamPreviewCache
 from src.player.strategies import call_fast_strategy, call_normal_strategy, call_deep_strategy
+from src.player import pkhex_core
 
 
 # =============================================================================
@@ -1885,7 +1886,7 @@ class PochampsPlayer(Player):
         self.api_key = api_key
         self.temperature = temperature
         self.log_dir = log_dir
-        self.global_timeout = 25.0
+        self.global_timeout = 120.0  # 2 minutes for deep strategy (gpt-5.1)
 
         # OpenAI client & thread pool
         # For local OSS models, set base_url (e.g., gpt-oss Responses API server)
@@ -2142,6 +2143,67 @@ class PochampsPlayer(Player):
             self.item_effect = {}
             self.gen9_pokedex = {}
             self.gen9_typechart = {}
+
+    def _get_item_vgc_notes(self, item_name: str) -> str:
+        """VGC에서 아이템의 전략적 의미 반환."""
+        item_lower = item_name.lower().replace(" ", "").replace("-", "")
+        
+        vgc_notes = {
+            # Choice 아이템
+            "choicescarf": "⚡ Speed boost (1.5x) but locked into one move. Great for revenge killing or outspeeding threats. Check if opponent might have this!",
+            "choiceband": "💪 Attack boost (1.5x) but locked into one move. Huge damage but predictable.",
+            "choicespecs": "🔮 Sp.Atk boost (1.5x) but locked into one move. Can't use Protect!",
+            
+            # 생존 아이템
+            "focussash": "🛡️ Survives one hit at full HP with 1 HP. Common on frail setup sweepers or leads. Broken by multi-hit moves, weather, hazards.",
+            "assaultvest": "🧱 Sp.Def boost (1.5x) but CAN'T USE STATUS MOVES (no Protect!). Check before assuming they have Protect.",
+            "eviolite": "🛡️ Def/SpD boost (1.5x) for NFE Pokemon. Makes Pokemon like Dusclops very bulky.",
+            
+            # 부스트 아이템
+            "lifeorb": "💥 All attacks do 1.3x damage but lose 10% HP per attack. High damage output with flexibility.",
+            "expertbelt": "🎯 Super effective moves do 1.2x damage. No drawback, good for coverage moves.",
+            "weaknesspolicy": "📈 +2 Atk/SpA when hit by super effective move. Common with Tera to bait weaknesses.",
+            
+            # 유틸리티 아이템
+            "safetygoggles": "👓 Immune to weather damage AND powder moves (Spore, Sleep Powder). Great vs Amoonguss!",
+            "covertcloak": "🎭 Blocks secondary effects (flinch, stat drops, status from moves). Counters Fake Out flinch!",
+            "clearamulet": "🔒 Prevents stat drops from opponent's moves/abilities. Counters Intimidate!",
+            "protectivepads": "🧤 No contact effects (Rocky Helmet, Rough Skin, etc.).",
+            
+            # 열매
+            "sitrusberry": "🍓 Heals 25% HP at 50% or less. Standard bulk berry.",
+            "lumberry": "✨ Cures any status once. Great vs status-heavy teams.",
+            "aguavberry": "🍇 Heals 33% HP at 25% or less (Gluttony activates at 50%).",
+            "figyberry": "🍑 Heals 33% HP at 25% or less (Gluttony activates at 50%).",
+            "wikiberry": "🍊 Heals 33% HP at 25% or less (Gluttony activates at 50%).",
+            "iapapaberry": "🍋 Heals 33% HP at 25% or less (Gluttony activates at 50%).",
+            "magoberry": "🍒 Heals 33% HP at 25% or less (Gluttony activates at 50%).",
+            
+            # 스위칭 아이템
+            "ejectbutton": "🔄 Switches out when hit by a damaging move. Can disrupt opponent's plans.",
+            "shedshell": "🐚 Can always switch out (ignores trapping). Counters Shadow Tag/Arena Trap.",
+            
+            # 트릭룸 아이템
+            "ironball": "⚫ Halves Speed, grounds Flying-types. Used for Trick Room or to be slower.",
+            "roomservice": "🚪 -1 Speed when Trick Room is set. Helps in Trick Room teams.",
+            
+            # 시그니처 오브
+            "souldev": "👻 Giratina's orb. 1.2x Ghost/Dragon moves.",
+            "adamantorb": "💎 Dialga's orb. 1.2x Steel/Dragon moves.",
+            "lustrousorb": "🌊 Palkia's orb. 1.2x Water/Dragon moves.",
+            "griseousorb": "😈 Giratina's orb (Origin). 1.2x Ghost/Dragon moves.",
+            "boosterenergy": "⚡ Activates Protosynthesis/Quark Drive without weather/terrain. One-time boost.",
+            
+            # 기타 유용한 아이템
+            "leftovers": "🍖 Heals 1/16 HP each turn. Sustained recovery.",
+            "blacksludge": "🧪 Like Leftovers but damages non-Poison types if Tricked.",
+            "lightclay": "🏗️ Extends Light Screen/Reflect/Aurora Veil to 8 turns.",
+            "terrainextender": "🌍 Extends terrain to 8 turns.",
+            "mentalherb": "🌿 Cures Taunt, Encore, Disable, etc. once. Good on support Pokemon.",
+            "redcard": "🃏 Forces opponent to switch when holder is hit. Disruption tool.",
+        }
+        
+        return vgc_notes.get(item_lower, "Standard item. Check effect description for details.")
 
     # =========================================================================
     # Battle State Management
@@ -2598,7 +2660,7 @@ class PochampsPlayer(Player):
             
             strategy_summaries.append(summary)
         
-        # Build context summary
+        # Build context summary with DETAILED move information per slot
         context_summary = ""
         if battle_context:
             context_summary = f"""
@@ -2606,20 +2668,59 @@ CURRENT BATTLE STATE:
 - Turn: {battle_context.get('turn', '?')}
 - Force Switch: {battle_context.get('force_switch', [False, False])}
 """
-            # Add active Pokemon info
+            # Add DETAILED active Pokemon info with available moves
             if battle_context.get('my_active'):
-                context_summary += "- My Active: "
+                context_summary += "\n=== YOUR ACTIVE POKEMON (USE ONLY THESE MOVES!) ===\n"
                 for p in battle_context['my_active']:
                     if isinstance(p, dict):
-                        context_summary += f"{p.get('species', '?')} ({p.get('hp_percent', '?')}%), "
-                context_summary = context_summary.rstrip(", ") + "\n"
+                        slot_num = p.get('slot', '?')
+                        species = p.get('species', '?')
+                        hp = p.get('hp_percent', '?')
+                        context_summary += f"\n[SLOT {slot_num}] {species} ({hp}%)\n"
+                        
+                        # List available moves with target info
+                        moves = p.get('moves', [])
+                        if moves:
+                            context_summary += "  AVAILABLE MOVES:\n"
+                            for m in moves:
+                                move_id = m.get('id', '?')
+                                move_type = m.get('type', '?')
+                                category = m.get('category', '?')
+                                bp = m.get('base_power', 0) or '-'
+                                targets = m.get('valid_targets', [0])
+                                
+                                # Determine target type from move data
+                                target_info = ""
+                                if targets == [0] or targets == []:
+                                    target_info = "⚠️ NO TARGET (spread/self)"
+                                elif -2 in targets and len(targets) == 1:
+                                    target_info = "SELF only (target=-2 or omit)"
+                                elif -1 in targets:
+                                    target_info = f"targets={targets}"
+                                else:
+                                    target_info = f"target=1(opp L) or 2(opp R)"
+                                
+                                context_summary += f"    - {move_id}: {move_type}/{category} BP={bp} | {target_info}\n"
+                        else:
+                            context_summary += "  (No moves available - must switch)\n"
             
             if battle_context.get('opponent_active'):
-                context_summary += "- Opponent Active: "
+                context_summary += "\n=== OPPONENT ACTIVE ===\n"
                 for p in battle_context['opponent_active']:
                     if isinstance(p, dict):
-                        context_summary += f"{p.get('species', '?')} ({p.get('hp_percent', '?')}%), "
-                context_summary = context_summary.rstrip(", ") + "\n"
+                        slot_num = p.get('slot', '?')
+                        species = p.get('species', '?')
+                        hp = p.get('hp_percent', '?')
+                        types = "/".join(p.get('types', [])) if p.get('types') else "?"
+                        context_summary += f"  [Slot {slot_num}] {species} ({types}) {hp}%\n"
+            
+            # Available switches
+            switches = battle_context.get('available_switches', [])
+            if switches:
+                context_summary += "\n=== AVAILABLE SWITCHES ===\n"
+                for slot_idx, slot_switches in enumerate(switches):
+                    if isinstance(slot_switches, list) and slot_switches:
+                        context_summary += f"  Slot {slot_idx + 1}: {', '.join(slot_switches)}\n"
         
         prompt = f"""══════════════════════════════════════════════════════════════
                     🎯 TURN DECISION - FINAL SYNTHESIS 🎯
@@ -2631,28 +2732,29 @@ Synthesize these into ONE optimal final decision.
 {chr(10).join(strategy_summaries)}
 
 ══════════════════════════════════════════════════════════════
-DECISION CRITERIA:
-1. If strategies AGREE → High confidence, use that decision
-2. If strategies DISAGREE → Analyze WHY and pick the best reasoning
-3. Consider: damage potential, survival, momentum, win condition
+⚠️ CRITICAL VALIDATION RULES ⚠️
 
-IMPORTANT RULES:
-- If force_switch=[True, X] for a slot, that slot MUST use action="switch"
-- SPREAD MOVES (hit all opponents): hypervoice, dazzlinggleam, heatwave, rockslide, earthquake, etc.
-  → These moves CANNOT have a target! OMIT the target field entirely!
-  → Server rejects "You can't choose a target for X" if you specify target for spread moves
-- SINGLE TARGET moves: target=1 (opp slot1), target=2 (opp slot2)
-- Use valid Pokemon names from the available switches
-- Only support moves can be targeted to allies
-- Do not target Attack moves at allies 
+1. **USE ONLY AVAILABLE MOVES**: Each slot can ONLY use moves listed under their AVAILABLE MOVES!
+   - Slot 1 (e.g., Incineroar) can ONLY use Incineroar's moves
+   - Slot 2 (e.g., Gholdengo) can ONLY use Gholdengo's moves
+   - DO NOT MIX UP which Pokemon has which moves!
+
+2. **SPREAD MOVES (NO TARGET)**: Moves marked "⚠️ NO TARGET" CANNOT have a target!
+   - hypervoice, makeitrain, earthquake, heatwave, dazzlinggleam, etc.
+   - OMIT the "target" field entirely OR use target: 0
+   - Server REJECTS "You can't choose a target for X" if you specify target
+
+3. **SINGLE TARGET MOVES**: target=1 (opponent left), target=2 (opponent right)
+
+4. **FORCE SWITCH**: If force_switch=[True, X], that slot MUST use action="switch"
 
 ══════════════════════════════════════════════════════════════
 
 OUTPUT FORMAT (JSON only, no explanation outside JSON):
 {{
-    "synthesis_reasoning": "<brief explanation of why you chose this combination>",
-    "slot1": {{"action": "move"|"switch", "move": "<move_name>", "target": <int>, "pokemon": "<switch_target>", "terastallize": false}},
-    "slot2": {{"action": "move"|"switch", "move": "<move_name>", "target": <int>, "pokemon": "<switch_target>", "terastallize": false}}
+    "synthesis_reasoning": "<brief explanation>",
+    "slot1": {{"action": "move"|"switch", "move": "<move_id>", "target": <1|2|omit_for_spread>}},
+    "slot2": {{"action": "move"|"switch", "move": "<move_id>", "target": <1|2|omit_for_spread>}}
 }}
 """
         return prompt
@@ -4264,14 +4366,18 @@ Be precise. Only include inferences with probability >= 60.0."""
         # =========================================================================
         # Check move's target property (from game data)
         # Possible values: "self", "allySide", "allAdjacent", "allAdjacentFoes", "all", "foeSide", etc.
+        # NOTE: All values are lowercase for case-insensitive comparison
         NO_TARGET_TYPES = {
-            "self",           # Swords Dance, Calm Mind, Protect, etc.
-            "allySide",       # Tailwind, Light Screen, Reflect, etc.
-            "allAdjacent",    # Earthquake, Discharge, etc. (hits all adjacent)
-            "allAdjacentFoes", # Hyper Voice, Dazzling Gleam, Heat Wave, etc.
-            "all",            # Perish Song, etc.
-            "foeSide",        # Stealth Rock, Spikes, etc.
-            "allies",         # Helping Hand targets ally but no target selection
+            "self",             # Swords Dance, Calm Mind, Protect, etc.
+            "allyside",         # Tailwind, Light Screen, Reflect, etc.
+            "alladjacent",      # Earthquake, Discharge, etc. (hits all adjacent)
+            "alladjacentfoes",  # Hyper Voice, Dazzling Gleam, Heat Wave, Make It Rain, etc.
+            "all",              # Perish Song, etc.
+            "foeside",          # Stealth Rock, Spikes, etc.
+            "allies",           # Helping Hand targets ally but no target selection
+            "randomnormal",     # Sleep Talk, Metronome, etc.
+            "scripted",         # Counter, Mirror Coat, etc.
+            "allyteam",         # Heal Bell, Aromatherapy, etc.
         }
         
         move_target_type = None
@@ -5087,282 +5193,148 @@ After gathering and verifying data, respond with:
         
         if tool_name == "get_pokemon_info":
             generation = args.get("generation", 9)
-            pokemon = args.get("pokemon", "").lower().replace(" ", "")
-            # TODO: generation별 pokedex 분기 처리
-            # 현재는 하드코딩된 샘플 데이터 반환
-            pokemon_db = {
-                "incineroar": {
-                    "species": "Incineroar",
-                    "types": ["Fire", "Dark"],
-                    "baseStats": {"hp": 95, "atk": 115, "def": 90, "spa": 80, "spd": 90, "spe": 60},
-                    "abilities": {"0": "Blaze", "H": "Intimidate"}
-                },
-                "rillaboom": {
-                    "species": "Rillaboom",
-                    "types": ["Grass"],
-                    "baseStats": {"hp": 100, "atk": 125, "def": 90, "spa": 60, "spd": 70, "spe": 85},
-                    "abilities": {"0": "Overgrow", "H": "Grassy Surge"}
-                },
-                "urshifu": {
-                    "species": "Urshifu",
-                    "types": ["Fighting", "Dark"],
-                    "baseStats": {"hp": 100, "atk": 130, "def": 100, "spa": 63, "spd": 60, "spe": 97},
-                    "abilities": {"0": "Unseen Fist"}
-                },
-                "urshifurapidstrike": {
-                    "species": "Urshifu-Rapid-Strike",
-                    "types": ["Fighting", "Water"],
-                    "baseStats": {"hp": 100, "atk": 130, "def": 100, "spa": 63, "spd": 60, "spe": 97},
-                    "abilities": {"0": "Unseen Fist"}
-                },
-                "miraidon": {
-                    "species": "Miraidon",
-                    "types": ["Electric", "Dragon"],
-                    "baseStats": {"hp": 100, "atk": 85, "def": 100, "spa": 135, "spd": 115, "spe": 135},
-                    "abilities": {"0": "Hadron Engine"}
-                },
-                "koraidon": {
-                    "species": "Koraidon",
-                    "types": ["Fighting", "Dragon"],
-                    "baseStats": {"hp": 100, "atk": 135, "def": 115, "spa": 85, "spd": 100, "spe": 135},
-                    "abilities": {"0": "Orichalcum Pulse"}
-                },
-                "fluttermane": {
-                    "species": "Flutter Mane",
-                    "types": ["Ghost", "Fairy"],
-                    "baseStats": {"hp": 55, "atk": 55, "def": 55, "spa": 135, "spd": 135, "spe": 135},
-                    "abilities": {"0": "Protosynthesis"}
-                },
-                "chienpao": {
-                    "species": "Chien-Pao",
-                    "types": ["Dark", "Ice"],
-                    "baseStats": {"hp": 80, "atk": 120, "def": 80, "spa": 90, "spd": 65, "spe": 135},
-                    "abilities": {"0": "Sword of Ruin"}
-                },
-                "landorus": {
-                    "species": "Landorus",
-                    "types": ["Ground", "Flying"],
-                    "baseStats": {"hp": 89, "atk": 125, "def": 90, "spa": 115, "spd": 80, "spe": 101},
-                    "abilities": {"0": "Sand Force", "H": "Sheer Force"}
-                },
-                "amoonguss": {
-                    "species": "Amoonguss",
-                    "types": ["Grass", "Poison"],
-                    "baseStats": {"hp": 114, "atk": 85, "def": 70, "spa": 85, "spd": 80, "spe": 30},
-                    "abilities": {"0": "Effect Spore", "H": "Regenerator"}
-                }
-            }
-            
-            if pokemon in pokemon_db:
-                return pokemon_db[pokemon]
-            else:
+            pokemon = args.get("pokemon", "")
+
+            # PKHeX Core를 통해 실제 포켓몬 데이터 가져오기
+            try:
+                pokemon_data = pkhex_core.get_pokemon_info(pokemon, language="en")
+
+                if pokemon_data:
+                    return pokemon_data
+                else:
+                    # 포켓몬을 찾지 못한 경우 기본값 반환
+                    return {
+                        "species": pokemon,
+                        "types": ["Unknown"],
+                        "baseStats": {"hp": 80, "atk": 80, "def": 80, "spa": 80, "spd": 80, "spe": 80},
+                        "abilities": {},
+                        "note": "No detailed data available for this Pokemon"
+                    }
+            except Exception as e:
+                # PKHeX Core 오류 발생 시 기본값 반환
                 return {
                     "species": pokemon,
                     "types": ["Unknown"],
                     "baseStats": {"hp": 80, "atk": 80, "def": 80, "spa": 80, "spd": 80, "spe": 80},
                     "abilities": {},
-                    "note": "No detailed data available for this Pokemon"
+                    "note": f"Error retrieving Pokemon data: {str(e)}"
                 }
         
         elif tool_name == "get_move_info":
             generation = args.get("generation", 9)
-            move = args.get("move", "").lower().replace(" ", "")
-            # TODO: generation별 moves 분기 처리
-            # 현재는 하드코딩된 샘플 데이터 반환
-            move_db = {
-                "fakeout": {
-                    "name": "Fake Out",
-                    "type": "Normal",
-                    "category": "Physical",
-                    "basePower": 40,
-                    "accuracy": 100,
-                    "priority": 3,
-                    "target": "normal",
-                    "desc": "Usually goes first. The target flinches. First turn out only."
-                },
-                "protect": {
-                    "name": "Protect",
-                    "type": "Normal",
-                    "category": "Status",
-                    "basePower": 0,
-                    "accuracy": 100,
-                    "priority": 4,
-                    "target": "self",
-                    "desc": "Prevents all moves from affecting the user this turn."
-                },
-                "closecombat": {
-                    "name": "Close Combat",
-                    "type": "Fighting",
-                    "category": "Physical",
-                    "basePower": 120,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Lowers the user's Defense and Sp. Def by 1."
-                },
-                "surgingstrikes": {
-                    "name": "Surging Strikes",
-                    "type": "Water",
-                    "category": "Physical",
-                    "basePower": 25,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Hits 3 times. Always results in a critical hit."
-                },
-                "grassyglide": {
-                    "name": "Grassy Glide",
-                    "type": "Grass",
-                    "category": "Physical",
-                    "basePower": 55,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "User on Grassy Terrain: +1 priority."
-                },
-                "flareblitz": {
-                    "name": "Flare Blitz",
-                    "type": "Fire",
-                    "category": "Physical",
-                    "basePower": 120,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Has 33% recoil. 10% chance to burn."
-                },
-                "knockoff": {
-                    "name": "Knock Off",
-                    "type": "Dark",
-                    "category": "Physical",
-                    "basePower": 65,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "1.5x damage if foe holds an item. Removes item."
-                },
-                "partingshot": {
-                    "name": "Parting Shot",
-                    "type": "Dark",
-                    "category": "Status",
-                    "basePower": 0,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Lowers target's Atk, Sp. Atk by 1. User switches."
-                },
-                "electrodrift": {
-                    "name": "Electro Drift",
-                    "type": "Electric",
-                    "category": "Special",
-                    "basePower": 100,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Super effective hits deal 1.33x damage."
-                },
-                "dracometeo": {
-                    "name": "Draco Meteor",
-                    "type": "Dragon",
-                    "category": "Special",
-                    "basePower": 130,
-                    "accuracy": 90,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "Lowers the user's Sp. Atk by 2."
-                }
-            }
+            move_name = args.get("move", "").lower().replace(" ", "").replace("-", "")
             
-            if move in move_db:
-                return move_db[move]
-            else:
-                return {
-                    "name": move,
-                    "type": "Unknown",
-                    "category": "Unknown",
-                    "basePower": 0,
-                    "accuracy": 100,
-                    "priority": 0,
-                    "target": "normal",
-                    "desc": "No detailed data available for this move"
-                }
+            # gen9moves.json에서 기술 정보 가져오기
+            if hasattr(self, 'gen9_moves') and self.gen9_moves:
+                move_data = self.gen9_moves.get(move_name)
+                if move_data:
+                    # target 필드 해석 추가
+                    target_type = move_data.get("target", "normal")
+                    target_desc = {
+                        "normal": "Single target - must specify target (1=opp left, 2=opp right)",
+                        "self": "Self-targeting - no target needed (Protect, Swords Dance, etc.)",
+                        "allAdjacentFoes": "SPREAD MOVE - hits all opponents, NO target allowed!",
+                        "allAdjacent": "SPREAD MOVE - hits all adjacent (including ally), NO target!",
+                        "allySide": "Ally side effect - no target needed (Tailwind, Light Screen)",
+                        "foeSide": "Foe side effect - no target needed (Stealth Rock, Spikes)",
+                        "all": "Field effect - no target needed (Perish Song)",
+                        "adjacentAlly": "Ally only - target=-1 for ally (Helping Hand)",
+                        "adjacentAllyOrSelf": "Self or ally - target=-2 for self, -1 for ally",
+                        "any": "Can target anyone on field",
+                        "adjacentFoe": "Single opponent - target=1 or 2",
+                        "randomNormal": "Random target - no target needed",
+                        "scripted": "Counter move - no target needed"
+                    }.get(target_type, f"Unknown target type: {target_type}")
+                    
+                    # 카테고리 정규화
+                    category = move_data.get("category", "Unknown")
+                    
+                    return {
+                        "name": move_data.get("name", move_name),
+                        "type": move_data.get("type", "Unknown"),
+                        "category": category,
+                        "basePower": move_data.get("basePower", 0),
+                        "accuracy": move_data.get("accuracy", 100),
+                        "priority": move_data.get("priority", 0),
+                        "target": target_type,
+                        "target_description": target_desc,
+                        "is_spread_move": target_type in ["allAdjacentFoes", "allAdjacent", "all", "allySide", "foeSide"],
+                        "pp": move_data.get("pp", 0),
+                        "flags": move_data.get("flags", {}),
+                        "secondary": move_data.get("secondary"),
+                        "desc": move_data.get("desc", move_data.get("shortDesc", "No description available"))
+                    }
+            
+            # Fallback: 기본 응답
+            return {
+                "name": move_name,
+                "type": "Unknown",
+                "category": "Unknown",
+                "basePower": 0,
+                "accuracy": 100,
+                "priority": 0,
+                "target": "normal",
+                "target_description": "Unknown - data not found",
+                "is_spread_move": False,
+                "desc": "No detailed data available for this move. Check move name spelling."
+            }
         
         elif tool_name == "get_item_info":
             generation = args.get("generation", 9)
-            item = args.get("item", "").lower().replace(" ", "")
-            # TODO: generation별 item 데이터 분기 처리
-            # 현재는 하드코딩된 샘플 데이터 반환
-            item_db = {
-                "choicescarf": {
-                    "name": "Choice Scarf",
-                    "desc": "Holder's Speed is 1.5x, but it can only select the first move it executes.",
-                    "category": "speed_boost",
-                    "common_users": ["Urshifu", "Landorus", "Flutter Mane"]
-                },
-                "focussash": {
-                    "name": "Focus Sash",
-                    "desc": "If holder's HP is full, survives any single hit with 1 HP. Single use.",
-                    "category": "survival",
-                    "common_users": ["Whimsicott", "Chi-Yu", "Froslass"]
-                },
-                "lifeorb": {
-                    "name": "Life Orb",
-                    "desc": "Holder's attacks do 1.3x damage, loses 1/10 max HP after attacking.",
-                    "category": "damage_boost",
-                    "common_users": ["Miraidon", "Koraidon", "Flutter Mane"]
-                },
-                "assaultvest": {
-                    "name": "Assault Vest",
-                    "desc": "Holder's Sp. Def is 1.5x, but can only use attacking moves.",
-                    "category": "bulk",
-                    "common_users": ["Rillaboom", "Incineroar", "Kingambit"]
-                },
-                "safetygoggles": {
-                    "name": "Safety Goggles",
-                    "desc": "Protects from weather damage and powder moves.",
-                    "category": "utility",
-                    "common_users": ["Incineroar", "Amoonguss", "Tornadus"]
-                },
-                "sitrusberry": {
-                    "name": "Sitrus Berry",
-                    "desc": "Restores 25% max HP when at 50% or less.",
-                    "category": "recovery",
-                    "common_users": ["Incineroar", "Amoonguss", "Dondozo"]
-                },
-                "clearamulet": {
-                    "name": "Clear Amulet",
-                    "desc": "Prevents other Pokemon from lowering the holder's stat stages.",
-                    "category": "utility",
-                    "common_users": ["Koraidon", "Arcanine", "Kingambit"]
-                },
-                "covertcloak": {
-                    "name": "Covert Cloak",
-                    "desc": "Protects holder from additional effects of moves.",
-                    "category": "utility",
-                    "common_users": ["Kingambit", "Tornadus", "Iron Hands"]
-                },
-                "choiceband": {
-                    "name": "Choice Band",
-                    "desc": "Holder's Attack is 1.5x, but it can only select the first move it executes.",
-                    "category": "damage_boost",
-                    "common_users": ["Rillaboom", "Chien-Pao", "Dragonite"]
-                },
-                "choicespecs": {
-                    "name": "Choice Specs",
-                    "desc": "Holder's Sp. Atk is 1.5x, but it can only select the first move it executes.",
-                    "category": "damage_boost",
-                    "common_users": ["Miraidon", "Flutter Mane", "Chi-Yu"]
-                }
-            }
+            item_name = args.get("item", "").lower().replace(" ", "").replace("-", "")
             
-            if item in item_db:
-                return item_db[item]
-            else:
-                return {
-                    "name": item,
-                    "desc": "No detailed information available for this item.",
-                    "category": "unknown",
-                    "common_users": []
-                }
+            # item_effect.json에서 아이템 정보 가져오기
+            if hasattr(self, 'item_effect') and self.item_effect:
+                item_data = self.item_effect.get(item_name)
+                if item_data:
+                    # 아이템 카테고리 분류 (VGC에서 중요한 정보)
+                    name_lower = item_name.lower()
+                    category = "other"
+                    
+                    # 카테고리 자동 분류
+                    if "choice" in name_lower:
+                        category = "choice_lock"  # 기술 고정
+                    elif "berry" in name_lower:
+                        category = "berry"  # 열매
+                    elif name_lower in ["lifeorb", "expertbelt", "muscleband", "wiseglasses", "metronome"]:
+                        category = "damage_boost"
+                    elif name_lower in ["focussash", "focusband", "airballoon"]:
+                        category = "survival"
+                    elif name_lower in ["assaultvest", "eviolite", "rockyhelmet", "leftovers"]:
+                        category = "bulk"
+                    elif name_lower in ["safetygoggles", "covertcloak", "clearamulet", "protectivepads", "abilityshield"]:
+                        category = "utility_protection"
+                    elif name_lower in ["ejectbutton", "ejectpack", "redcard", "shedshell"]:
+                        category = "switching"
+                    elif name_lower in ["whiteherb", "mentalherb", "powerherb", "luminousmoss", "snowball", "absorbbulb", "cellbattery", "weaknesspolicy"]:
+                        category = "consumable_boost"
+                    elif "orb" in name_lower:
+                        category = "signature_orb"
+                    elif name_lower in ["throatspray", "roomservice", "blunderpolicy"]:
+                        category = "consumable_boost"
+                    elif name_lower in ["terrainextender", "lightclay", "gripclaw", "bindingband"]:
+                        category = "duration_extend"
+                    elif "gem" in name_lower:
+                        category = "type_gem"
+                    elif "plate" in name_lower or "memory" in name_lower:
+                        category = "type_change"
+                    elif name_lower in ["ironball", "laggingtail", "fullincense", "ringtarget"]:
+                        category = "trick_room_support"
+                    
+                    return {
+                        "name": item_data.get("name", item_name),
+                        "effect": item_data.get("effect", "No effect description available."),
+                        "category": category,
+                        "vgc_notes": self._get_item_vgc_notes(item_name)
+                    }
+            
+            # Fallback: 기본 응답
+            return {
+                "name": item_name,
+                "effect": "No detailed information available for this item.",
+                "category": "unknown",
+                "vgc_notes": "Check item name spelling."
+            }
         
         elif tool_name == "get_type_matchup":
             attack_type = args.get("attack_type", "").lower()

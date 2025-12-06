@@ -260,6 +260,12 @@ def call_deep_strategy(
     Deep strategy: Comprehensive analysis with iterative refinement.
     Uses extended reasoning and extensive tool usage.
     
+    IMPORTANT: Tool call flow for Responses API:
+    1. Initial request -> may return function_call items
+    2. Execute tools locally
+    3. Send tool results with previous_response_id to continue conversation
+    4. Repeat until text response is received
+    
     :param client: OpenAI client
     :param battle_tag: Battle identifier
     :param battle_context: Battle state dictionary
@@ -283,7 +289,11 @@ def call_deep_strategy(
         deep_system_prompt = _build_deep_system_prompt()
         user_prompt = _build_deep_prompt(battle_context)
         
-        conversation = [
+        # Track current response ID for tool call continuity
+        current_response_id = None
+        
+        # Initial request with full conversation
+        initial_input = [
             {"role": "system", "content": deep_system_prompt},
             {"role": "user", "content": user_prompt}
         ]
@@ -293,7 +303,6 @@ def call_deep_strategy(
             
             request_params = {
                 "model": model,
-                "input": conversation,
                 "max_output_tokens": max_tokens
             }
             
@@ -305,19 +314,27 @@ def call_deep_strategy(
             if model.startswith("o") or "gpt-5" in model:
                 request_params["reasoning"] = {"effort": reasoning_effort}
             
-            # NOTE: Each strategy call is independent - don't use previous_response_id
-            # This prevents "No tool output found" errors when previous response had tool calls
-            
             if tools:
                 request_params["tools"] = tools
             
+            # CRITICAL: Use previous_response_id for tool call continuity
+            # First iteration: use initial_input
+            # Subsequent iterations after tool calls: use previous_response_id + tool outputs
+            if current_response_id is None:
+                # First call - use full conversation
+                request_params["input"] = initial_input
+            else:
+                # Continuing after tool call - use previous_response_id
+                # The input should be the tool outputs only
+                request_params["previous_response_id"] = current_response_id
+                # input is set separately below based on context
+            
             response = client.responses.create(**request_params)
             
-            # Always update response ID to latest - needed for tool call continuity
-            current_response_id = None
+            # Always track the response ID for potential tool call follow-ups
             if hasattr(response, 'id'):
-                battle_response_ids[battle_tag] = response.id
                 current_response_id = response.id
+                battle_response_ids[battle_tag] = response.id
             
             _track_tokens(response, token_tracker)
             if hasattr(response, 'usage') and response.usage:
@@ -326,7 +343,7 @@ def call_deep_strategy(
             # Check for function calls
             func_calls = _extract_function_calls(response)
             if func_calls:
-                # Build function outputs and continue with previous_response_id
+                # Execute tools and build function outputs
                 function_outputs = []
                 for fc in func_calls:
                     func_args = json.loads(fc["arguments"])
@@ -337,27 +354,134 @@ def call_deep_strategy(
                         "call_id": fc["id"],
                         "output": json.dumps(result)
                     })
-                # Update conversation to be function outputs for next iteration
-                conversation = function_outputs
+                
+                # CRITICAL: For next iteration, we need to send tool outputs
+                # with previous_response_id to maintain conversation context
+                # Set up the next request params
+                request_params = {
+                    "model": model,
+                    "previous_response_id": current_response_id,
+                    "input": function_outputs,  # Tool outputs as input
+                    "max_output_tokens": max_tokens
+                }
+                
+                if not (model.startswith("o") or "gpt-5" in model):
+                    request_params["temperature"] = temperature
+                if model.startswith("o") or "gpt-5" in model:
+                    request_params["reasoning"] = {"effort": reasoning_effort}
+                if tools:
+                    request_params["tools"] = tools
+                
+                # Make the follow-up call with tool results
+                response = client.responses.create(**request_params)
+                
+                if hasattr(response, 'id'):
+                    current_response_id = response.id
+                    battle_response_ids[battle_tag] = response.id
+                
+                _track_tokens(response, token_tracker)
+                if hasattr(response, 'usage') and response.usage:
+                    progress_tracker[progress_key]["tokens_used"] += getattr(response.usage, 'output_tokens', 0)
+                
+                # Check if this response has more tool calls (nested tools)
+                more_func_calls = _extract_function_calls(response)
+                if more_func_calls:
+                    # Still has tool calls - continue iteration
+                    continue
+                
+                # Check for text response after tool execution
+                text = _extract_text_content(response)
+                if text:
+                    # Try to parse as JSON decision
+                    try:
+                        decision = json.loads(text)
+                        # Check for valid decision format (slot1/slot2 or action/name)
+                        if ("slot1" in decision or "slot2" in decision) or ("action" in decision and "name" in decision):
+                            _update_progress(progress_tracker, progress_key, "status", "completed")
+                            _update_progress(progress_tracker, progress_key, "decision", decision)
+                            return text
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    # Got text but not valid JSON - add to reasoning and ask for JSON
+                    _add_reasoning(progress_tracker, progress_key, text)
+                    
+                    # Request JSON format explicitly
+                    request_params = {
+                        "model": model,
+                        "previous_response_id": current_response_id,
+                        "input": [{"role": "user", "content": "Now provide your final decision in JSON format only. No explanation needed."}],
+                        "max_output_tokens": max_tokens
+                    }
+                    if not (model.startswith("o") or "gpt-5" in model):
+                        request_params["temperature"] = temperature
+                    
+                    response = client.responses.create(**request_params)
+                    
+                    if hasattr(response, 'id'):
+                        current_response_id = response.id
+                    
+                    _track_tokens(response, token_tracker)
+                    
+                    final_text = _extract_text_content(response)
+                    if final_text:
+                        try:
+                            decision = json.loads(final_text)
+                            if ("slot1" in decision or "slot2" in decision) or ("action" in decision):
+                                _update_progress(progress_tracker, progress_key, "status", "completed")
+                                _update_progress(progress_tracker, progress_key, "decision", decision)
+                                return final_text
+                        except json.JSONDecodeError:
+                            pass
+                
                 continue
             
-            # Check for text response
+            # No tool calls - check for text response directly
             text = _extract_text_content(response)
             if text:
                 try:
                     decision = json.loads(text)
-                    if "action" in decision and "name" in decision:
+                    if ("slot1" in decision or "slot2" in decision) or ("action" in decision and "name" in decision):
                         _update_progress(progress_tracker, progress_key, "status", "completed")
                         _update_progress(progress_tracker, progress_key, "decision", decision)
                         return text
                 except json.JSONDecodeError:
                     pass
                 
+                # Text but not valid JSON - ask for proper format
                 _add_reasoning(progress_tracker, progress_key, text)
-                conversation.append({"role": "assistant", "content": text})
-                conversation.append({"role": "user", "content": "Provide final decision in JSON format."})
+                
+                # Use previous_response_id to continue conversation
+                request_params = {
+                    "model": model,
+                    "previous_response_id": current_response_id,
+                    "input": [{"role": "user", "content": "Provide your final decision in JSON format:\n{\"slot1\": {\"action\": \"move\", \"move\": \"<id>\", \"target\": <1|2>}, \"slot2\": {...}}"}],
+                    "max_output_tokens": max_tokens
+                }
+                if not (model.startswith("o") or "gpt-5" in model):
+                    request_params["temperature"] = temperature
+                
+                response = client.responses.create(**request_params)
+                
+                if hasattr(response, 'id'):
+                    current_response_id = response.id
+                
+                _track_tokens(response, token_tracker)
+                
+                final_text = _extract_text_content(response)
+                if final_text:
+                    try:
+                        decision = json.loads(final_text)
+                        if ("slot1" in decision or "slot2" in decision):
+                            _update_progress(progress_tracker, progress_key, "status", "completed")
+                            _update_progress(progress_tracker, progress_key, "decision", decision)
+                            return final_text
+                    except json.JSONDecodeError:
+                        pass
+                
                 continue
             
+            # No text, no tool calls - something went wrong
             break
         
         _update_progress(progress_tracker, progress_key, "status", "max_iterations")

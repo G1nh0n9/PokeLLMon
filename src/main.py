@@ -131,7 +131,7 @@ async def main():
                                      open_team_sheets=args.open_team_sheets,
                                      debug_mode=args.debug,
                                      )
-    #heuristic_player = HeuristicsPlayer(battle_format=battle_format, open_team_sheets=args.open_team_sheets)
+    heuristic_player = HeuristicsPlayer(battle_format=battle_format, open_team_sheets=args.open_team_sheets)
     pochamps_player = PochampsPlayer(battle_format=battle_format,
                                      api_key=os.getenv("OPENAI_API_KEY"),
                                      backend=args.backend,
@@ -145,18 +145,18 @@ async def main():
                                      debug_mode=args.debug
                                      )
     
-    pochamps_player2._dynamax_disable = True
+    heuristic_player._dynamax_disable = True
     pochamps_player._dynamax_disable = True
     
     # Wait for both players to be logged in, then cleanup any stale sessions
     print("[INIT] Waiting for players to log in...")
-    await pochamps_player2.ps_client.wait_for_login()
+    await heuristic_player.ps_client.wait_for_login()
     await pochamps_player.ps_client.wait_for_login()
     print("[INIT] Both players logged in. Cleaning up stale sessions...")
     
     # Run cleanup for both players concurrently to forfeit any auto-rejoined battles
     await asyncio.gather(
-        pochamps_player2.cleanup_stale_sessions(wait_time=3.0),
+        heuristic_player.cleanup_stale_sessions(wait_time=3.0),
         pochamps_player.cleanup_stale_sessions(wait_time=3.0)
     )
     print("[INIT] Stale session cleanup complete.\n")
@@ -179,7 +179,7 @@ async def main():
         print(f"Team 2 (PochampsPlayer): {team2.split(chr(10))[0][:50]}...\n")
         
         # Update teams once
-        pochamps_player2.update_team(team1)
+        heuristic_player.update_team(team1)
         pochamps_player.update_team(team2)
     
     try:
@@ -188,17 +188,17 @@ async def main():
             print("\n\n\n\n\n")
             print(f"{'='*20} Starting Battle {i+1}/{args.n_battles} {'='*20}\n")
             # Forfeit and clean up any stale battle sessions before starting new battle
-            await pochamps_player2.forfeit_all_battles()
+            await heuristic_player.forfeit_all_battles()
             await pochamps_player.forfeit_all_battles()
             
             # Randomly decide who initiates the battle
             x = random.randint(0, 100)
             if x > 50:
                 # heuristic_player (p1 with team1) battles against pochamps_player (p2 with team2)
-                await pochamps_player2.battle_against(pochamps_player, n_battles=1)
+                await heuristic_player.battle_against(pochamps_player, n_battles=1)
             else:
                 # pochamps_player (p1 with team2) battles against heuristic_player (p2 with team1)
-                await pochamps_player.battle_against(pochamps_player2, n_battles=1)
+                await pochamps_player.battle_against(heuristic_player, n_battles=1)
             
             # Save battle logs
             for battle_id, battle in pochamps_player.battles.items():
@@ -213,14 +213,14 @@ async def main():
                 print(f"  Team 2 (PochampsPlayer): {team2.split(chr(10))[0][:50]}...")
                 
                 # Update teams for this battle
-                pochamps_player2.update_team(team1)
+                heuristic_player.update_team(team1)
                 pochamps_player.update_team(team2)
     
     except (KeyboardInterrupt, Exception) as e:
         print(f"\n\n[CLEANUP] Error or interrupt detected: {type(e).__name__}")
         print("[CLEANUP] Forfeiting all active battles...")
         try:
-            await pochamps_player2.forfeit_all_battles()
+            await heuristic_player.forfeit_all_battles()
             await pochamps_player.forfeit_all_battles()
             print("[CLEANUP] All battles forfeited successfully.")
         except Exception as cleanup_error:
