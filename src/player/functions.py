@@ -14,6 +14,7 @@ BATTLE PHASE (BATTLE_TOOLS here):
 - NO basic Pokemon info (already cached from team preview)
 """
 
+import requests
 import json
 from typing import Dict, List, Optional, Any
 
@@ -33,38 +34,519 @@ BATTLE_TOOLS = [
     # =========================================================================
     {
         "type": "function",
-        "name": "calculate_damage",
+        "name": "calculate_showdown_damage",
         "description": "Calculate damage range for a specific attack. Use when you need precise damage numbers to determine if you can KO or survive. Returns min/max damage percentages.",
         "parameters": {
             "type": "object",
             "properties": {
                 "attacker": {
-                    "type": "string",
-                    "description": "Attacking Pokemon name"
+                    "type": "object",
+                    "description": "Attacking Pokemon data",
+                    "properties": {
+                        "species": {
+                            "type": "string",
+                            "description": "Pokemon species name"
+                        },
+                        "level": {
+                            "type": "integer",
+                            "description": "Pokemon level (1-100)"
+                        },
+                        "ability": {
+                            "type": "string",
+                            "description": "Pokemon's active ability"
+                        },
+                        "teraType": {
+                            "type": "string",
+                            "description": "Tera type when terastallized, omit if not terastallized"
+                        },
+                        "item": {
+                            "type": "string",
+                            "description": "Held item name"
+                        },
+                        "nature": {
+                            "type": "string",
+                            "description": "Pokemon's nature (e.g., 'Jolly', 'Adamant')"
+                        },
+                        "isSaltCure": {
+                            "type": "boolean",
+                            "description": "Whether Pokemon is affected by Salt Cure"
+                        },
+                        "alliesFainted": {
+                            "type": "integer",
+                            "description": "Number of fainted allies on user's side"
+                        },
+                        "originalCurHP": {
+                            "type": "integer",
+                            "description": "Current HP before attack"
+                        },
+                        "boosts": {
+                            "type": "object",
+                            "description": "Stat stage changes (-6 to +6)",
+                            "properties": {
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack stage boost"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense stage boost"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack stage boost"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense stage boost"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed stage boost"
+                                }
+                            }
+                        },
+                        "ivs": {
+                            "type": "object",
+                            "description": "Individual Values (0-31 for each stat)",
+                            "properties": {
+                                "hp": {
+                                    "type": "integer",
+                                    "description": "HP IV"
+                                },
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack IV"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense IV"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack IV"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense IV"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed IV"
+                                }
+                            }
+                        },
+                        "evs": {
+                            "type": "object",
+                            "description": "Effort Values (0-252 per stat, max 510 total)",
+                            "properties": {
+                                "hp": {
+                                    "type": "integer",
+                                    "description": "HP EV"
+                                },
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack EV"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense EV"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack EV"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense EV"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed EV"
+                                }
+                            }
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Status condition: slp (sleep), psn (poison), brn (burn), frz (freeze), par (paralysis), tox (badly poisoned)",
+                            "enum": ["slp", "psn", "brn", "frz", "par", "tox"]
+                        },
+                        "toxicCounter": {
+                            "type": "integer",
+                            "description": "Badly poisoned counter (0 if not badly poisoned)"
+                        }
+                    },
+                    "required": ["species", "level"]
                 },
                 "defender": {
-                    "type": "string",
-                    "description": "Defending Pokemon name"
+                    "type": "object",
+                    "description": "Defending Pokemon data",
+                    "properties": {
+                        "species": {
+                            "type": "string",
+                            "description": "Pokemon species name"
+                        },
+                        "level": {
+                            "type": "integer",
+                            "description": "Pokemon level (1-100)"
+                        },
+                        "ability": {
+                            "type": "string",
+                            "description": "Pokemon's active ability"
+                        },
+                        "teraType": {
+                            "type": "string",
+                            "description": "Tera type when terastallized, omit if not terastallized"
+                        },
+                        "item": {
+                            "type": "string",
+                            "description": "Held item name"
+                        },
+                        "nature": {
+                            "type": "string",
+                            "description": "Pokemon's nature (e.g., 'Jolly', 'Adamant')"
+                        },
+                        "isSaltCure": {
+                            "type": "boolean",
+                            "description": "Whether Pokemon is affected by Salt Cure"
+                        },
+                        "alliesFainted": {
+                            "type": "integer",
+                            "description": "Number of fainted allies on user's side"
+                        },
+                        "originalCurHP": {
+                            "type": "integer",
+                            "description": "Current HP before attack"
+                        },
+                        "boosts": {
+                            "type": "object",
+                            "description": "Stat stage changes (-6 to +6)",
+                            "properties": {
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack stage boost"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense stage boost"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack stage boost"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense stage boost"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed stage boost"
+                                }
+                            }
+                        },
+                        "ivs": {
+                            "type": "object",
+                            "description": "Individual Values (0-31 for each stat)",
+                            "properties": {
+                                "hp": {
+                                    "type": "integer",
+                                    "description": "HP IV"
+                                },
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack IV"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense IV"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack IV"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense IV"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed IV"
+                                }
+                            }
+                        },
+                        "evs": {
+                            "type": "object",
+                            "description": "Effort Values (0-252 per stat, max 510 total)",
+                            "properties": {
+                                "hp": {
+                                    "type": "integer",
+                                    "description": "HP EV"
+                                },
+                                "atk": {
+                                    "type": "integer",
+                                    "description": "Attack EV"
+                                },
+                                "def": {
+                                    "type": "integer",
+                                    "description": "Defense EV"
+                                },
+                                "spa": {
+                                    "type": "integer",
+                                    "description": "Special Attack EV"
+                                },
+                                "spd": {
+                                    "type": "integer",
+                                    "description": "Special Defense EV"
+                                },
+                                "spe": {
+                                    "type": "integer",
+                                    "description": "Speed EV"
+                                }
+                            }
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Status condition: slp (sleep), psn (poison), brn (burn), frz (freeze), par (paralysis), tox (badly poisoned)",
+                            "enum": ["slp", "psn", "brn", "frz", "par", "tox"]
+                        },
+                        "toxicCounter": {
+                            "type": "integer",
+                            "description": "Badly poisoned counter (0 if not badly poisoned)"
+                        }
+                    },
+                    "required": ["species", "level"]
                 },
                 "move": {
                     "type": "string",
                     "description": "Move being used"
                 },
-                "attacker_tera_type": {
-                    "type": "string",
-                    "description": "Attacker's Tera type if terastallized (optional)"
-                },
-                "defender_tera_type": {
-                    "type": "string",
-                    "description": "Defender's Tera type if terastallized (optional)"
-                },
                 "field_conditions": {
                     "type": "object",
                     "description": "Current field conditions (optional)",
                     "properties": {
-                        "weather": {"type": "string"},
-                        "terrain": {"type": "string"},
-                        "screens": {"type": "array", "items": {"type": "string"}}
+                        "gameType": {
+                            "type": "string",
+                            "description": "Game type ('Singles' or 'Doubles')"
+                        },
+                        "terrain": {
+                            "type": "string",
+                            "description": "Active terrain (e.g., 'Electric', 'Grassy', 'Misty', 'Psychic')"
+                        },
+                        "weather": {
+                            "type": "string",
+                            "description": "Active weather (e.g., 'Rain', 'Sun', 'Hail', 'Sandstorm')"
+                        },
+                        "isMagicRoom": {
+                            "type": "boolean",
+                            "description": "Magic Room active"
+                        },
+                        "isWonderRoom": {
+                            "type": "boolean",
+                            "description": "Wonder Room active"
+                        },
+                        "isGravity": {
+                            "type": "boolean",
+                            "description": "Gravity active"
+                        },
+                        "isAuraBreak": {
+                            "type": "boolean",
+                            "description": "Aura Break active"
+                        },
+                        "isFairyAura": {
+                            "type": "boolean",
+                            "description": "Fairy Aura active"
+                        },
+                        "isDarkAura": {
+                            "type": "boolean",
+                            "description": "Dark Aura active"
+                        },
+                        "isBeadsOfRuin": {
+                            "type": "boolean",
+                            "description": "Beads of Ruin active"
+                        },
+                        "isSwordOfRuin": {
+                            "type": "boolean",
+                            "description": "Sword of Ruin active"
+                        },
+                        "isTabletsOfRuin": {
+                            "type": "boolean",
+                            "description": "Tablets of Ruin active"
+                        },
+                        "isVesselOfRuin": {
+                            "type": "boolean",
+                            "description": "Vessel of Ruin active"
+                        },
+                        "attackerSide": {
+                            "type": "object",
+                            "description": "Attacker's side conditions",
+                            "properties": {
+                                "spikes": {
+                                    "type": "integer",
+                                    "description": "Spikes layers (0-3)"
+                                },
+                                "steelsurge": {
+                                    "type": "boolean",
+                                    "description": "Steel Surge active"
+                                },
+                                "vinelash": {
+                                    "type": "boolean",
+                                    "description": "Vine Lash active"
+                                },
+                                "wildfire": {
+                                    "type": "boolean",
+                                    "description": "Wildfire active"
+                                },
+                                "cannonade": {
+                                    "type": "boolean",
+                                    "description": "Cannonade active"
+                                },
+                                "volcalith": {
+                                    "type": "boolean",
+                                    "description": "Volcalith active"
+                                },
+                                "isSR": {
+                                    "type": "boolean",
+                                    "description": "Stealth Rock active"
+                                },
+                                "isReflect": {
+                                    "type": "boolean",
+                                    "description": "Reflect active"
+                                },
+                                "isLightScreen": {
+                                    "type": "boolean",
+                                    "description": "Light Screen active"
+                                },
+                                "isProtected": {
+                                    "type": "boolean",
+                                    "description": "Protected active"
+                                },
+                                "isSeeded": {
+                                    "type": "boolean",
+                                    "description": "Leech Seed active"
+                                },
+                                "isForesight": {
+                                    "type": "boolean",
+                                    "description": "Foresight active"
+                                },
+                                "isTailwind": {
+                                    "type": "boolean",
+                                    "description": "Tailwind active"
+                                },
+                                "isHelpingHand": {
+                                    "type": "boolean",
+                                    "description": "Helping Hand active"
+                                },
+                                "isFlowerGift": {
+                                    "type": "boolean",
+                                    "description": "Flower Gift active"
+                                },
+                                "isFriendGuard": {
+                                    "type": "boolean",
+                                    "description": "Friend Guard active"
+                                },
+                                "isAuroraVeil": {
+                                    "type": "boolean",
+                                    "description": "Aurora Veil active"
+                                },
+                                "isBattery": {
+                                    "type": "boolean",
+                                    "description": "Battery ability active"
+                                },
+                                "isPowerSpot": {
+                                    "type": "boolean",
+                                    "description": "Power Spot active"
+                                },
+                                "isSwitching": {
+                                    "type": ["boolean", "null"],
+                                    "description": "Pokemon switching state"
+                                }
+                            }
+                        },
+                        "defenderSide": {
+                            "type": "object",
+                            "description": "Defender's side conditions",
+                            "properties": {
+                                "spikes": {
+                                    "type": "integer",
+                                    "description": "Spikes layers (0-3)"
+                                },
+                                "steelsurge": {
+                                    "type": "boolean",
+                                    "description": "Steel Surge active"
+                                },
+                                "vinelash": {
+                                    "type": "boolean",
+                                    "description": "Vine Lash active"
+                                },
+                                "wildfire": {
+                                    "type": "boolean",
+                                    "description": "Wildfire active"
+                                },
+                                "cannonade": {
+                                    "type": "boolean",
+                                    "description": "Cannonade active"
+                                },
+                                "volcalith": {
+                                    "type": "boolean",
+                                    "description": "Volcalith active"
+                                },
+                                "isSR": {
+                                    "type": "boolean",
+                                    "description": "Stealth Rock active"
+                                },
+                                "isReflect": {
+                                    "type": "boolean",
+                                    "description": "Reflect active"
+                                },
+                                "isLightScreen": {
+                                    "type": "boolean",
+                                    "description": "Light Screen active"
+                                },
+                                "isProtected": {
+                                    "type": "boolean",
+                                    "description": "Protected active"
+                                },
+                                "isSeeded": {
+                                    "type": "boolean",
+                                    "description": "Leech Seed active"
+                                },
+                                "isForesight": {
+                                    "type": "boolean",
+                                    "description": "Foresight active"
+                                },
+                                "isTailwind": {
+                                    "type": "boolean",
+                                    "description": "Tailwind active"
+                                },
+                                "isHelpingHand": {
+                                    "type": "boolean",
+                                    "description": "Helping Hand active"
+                                },
+                                "isFlowerGift": {
+                                    "type": "boolean",
+                                    "description": "Flower Gift active"
+                                },
+                                "isFriendGuard": {
+                                    "type": "boolean",
+                                    "description": "Friend Guard active"
+                                },
+                                "isAuroraVeil": {
+                                    "type": "boolean",
+                                    "description": "Aurora Veil active"
+                                },
+                                "isBattery": {
+                                    "type": "boolean",
+                                    "description": "Battery ability active"
+                                },
+                                "isPowerSpot": {
+                                    "type": "boolean",
+                                    "description": "Power Spot active"
+                                },
+                                "isSwitching": {
+                                    "type": ["boolean", "null"],
+                                    "description": "Pokemon switching state"
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -282,7 +764,7 @@ class ToolExecutor:
         :return: Result dictionary
         """
         executors = {
-            "calculate_damage": self.calculate_damage,
+            "calculate_damage": self.calculate_showdown_damage,
             "get_tera_matchup": self.get_tera_matchup,
             "check_speed_order": self.check_speed_order,
             "update_pokemon_prediction": self.update_pokemon_prediction,
@@ -391,6 +873,120 @@ class ToolExecutor:
             "is_2hko": min_percent >= 50,
             "notes": self._get_damage_notes(effectiveness, stab, field_conditions)
         }
+    
+    # =========================================================================
+    # Tool 1: Damage Calculation From Showdown Format
+    # =========================================================================
+    def calculate_showdown_damage(
+        self, 
+        attacker: Dict, 
+        defender: Dict, 
+        move: str,
+        field_conditions: Optional[Dict] = {},
+        **kwargs
+    ) -> Dict:
+        """
+        Sends data required for Showdown damage calculation to the endpoint and returns the result.
+        
+        Modifiers include: STAB, type effectiveness, weather, terrain, items, abilities
+        """
+
+        url = 'http://localhost:3000/calculate'
+        pokemon_gen = 9  # Assuming Gen 9 for this example
+
+        try:
+            response = requests.post(
+                url,
+                json={
+                    "generation": pokemon_gen,
+                    "attacker": attacker,
+                    "defender": defender,
+                    "move": move,
+                    "fieldConditions": field_conditions
+                },
+                timeout=10
+            )
+            
+            response.raise_for_status()
+            
+            # Parse JSON response
+            result = response.json()
+            
+            # Extract relevant data
+            attacker_name = result.get("attackerName", attacker['species'])
+            attacker_types = result.get("attacker", {}).get("types", [])
+            attacker_tera = result.get("attacker", {}).get("teraType", ["???"])
+            defender_name = result.get("defenderName", defender['species'])
+            defender_original_cur_hp = result.get("defender", {}).get("originalCurHP", 0)
+            move_name = result.get("move", {}).get("originalName", move)
+            move_type = result.get("move", {}).get("type", "???")
+            move_bp = result.get("move", {}).get("bp", 0)
+            field = result.get("field", field_conditions)
+            
+            # Calculate type effectiveness
+            effectiveness = self._calculate_type_effectiveness(
+                result.get("move", {}).get("type", "???"),
+                defender['species'],
+                defender['teraType']
+            )
+            
+            # STAB check (including Tera STAB)
+            stab = 1.0
+            if attacker_tera:
+                if move_type.lower() == attacker_tera.lower():
+                    stab = 2.0 if move_type.lower() in [t.lower() for t in attacker_types] else 1.5
+            elif move_type in attacker_types:
+                stab = 1.5
+            
+            # damage range (min, max)
+            min_damage = min(result.get("damage", [0]))
+            max_damage = max(result.get("damage", [0]))
+            min_percent = round(min_damage / defender_original_cur_hp * 100, 1) \
+                if defender_original_cur_hp > 0 else 0
+            max_percent = round(max_damage / defender_original_cur_hp * 100, 1) \
+                if defender_original_cur_hp > 0 else 0
+            
+            return {
+                "attacker": attacker_name,
+                "defender": defender_name,
+                "move": move_name,
+                "move_type": move_type,
+                "base_power": move_bp,
+                "effectiveness": effectiveness,
+                "stab": stab,
+                "min_damage": min_damage,
+                "max_damage": max_damage,
+                "min_damage_percent": min_percent,
+                "max_damage_percent": max_percent,
+                "is_ohko": min_percent >= 100,
+                "is_2hko": min_percent >= 50,
+                "notes": self._get_damage_notes(effectiveness, stab, field)
+            }
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Showdown Damage Calculation Request Failed: {e}")
+            return self.calculate_damage(
+                self,
+                attacker['species'],
+                defender['species'],
+                move,
+                attacker_tera_type=attacker.get('teraType'),
+                defender_tera_type=defender.get('teraType'),
+                field_conditions=field_conditions if field_conditions else None,
+                **kwargs
+            )
+        except json.JSONDecodeError as e:
+            print(f"Server response JSON decoding failed: {e}")
+            return self.calculate_damage(
+                self,
+                attacker['species'],
+                defender['species'],
+                move,
+                attacker_tera_type=attacker.get('teraType'),
+                defender_tera_type=defender.get('teraType'),
+                field_conditions=field_conditions if field_conditions else None,
+                **kwargs
+            )
     
     def _calculate_type_effectiveness(
         self, 

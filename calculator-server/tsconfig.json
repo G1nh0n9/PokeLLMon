@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    /* Modules */
+    // Node.jsのES Modules (import/export) 構文をサポート
+    "module": "NodeNext",
+    // モジュール解決戦略もNode.jsのESM形式に合わせる
+    "moduleResolution": "NodeNext",
+
+    /* Emit */
+    // TypeScriptファイルをどのバージョンのJavaScriptに変換するか (新しいものが推奨)
+    "target": "ES2022",
+    // コンパイル後のJavaScriptファイルをどこに出力するか
+    "outDir": "./dist",
+
+    /* Type Checking */
+    // 厳格な型チェックを有効にする (推奨)
+    "strict": true,
+
+    /* Interop Constraints */
+    // CommonJSライブラリをESMでインポートできるようにする (import express from 'express' を可能にする)
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+
+  // どのファイルをコンパイル対象とするか
+  "include": ["src/*"]
+}
