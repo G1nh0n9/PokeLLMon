@@ -5,6 +5,7 @@ from src.player import utils
 from src.player.baselines import MaxBasePowerPlayer, HeuristicsPlayer, RandomPlayer
 from src.player.gpt_player import LLMPlayer
 from src.player.pochamps_player import PochampsPlayer
+from src.player.new_pochamps_player import PochampsPlayer as NewPochampsPlayer
 from src.player.battle_order import (
     BattleOrder,
     DefaultBattleOrder,
@@ -45,4 +46,5 @@ __all__ = [
     "HeuristicsPlayer",
     "LLMPlayer",
     "PochampsPlayer",
+    "NewPochampsPlayer",
 ]

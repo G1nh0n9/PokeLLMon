@@ -555,7 +555,97 @@ BATTLE_TOOLS = [
     },
     
     # =========================================================================
-    # 2. Tera Matchup - Only needed when tera changes situation
+    # 2. Move Info - Get move metadata
+    # =========================================================================
+    {
+        "type": "function",
+        "name": "get_move_info",
+        "description": "Get metadata about a move: category, base power, priority, spread flag, and targeting. Use when you need to understand how a move behaves (single-target vs spread, priority, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "move": {
+                    "type": "string",
+                    "description": "Move name or ID"
+                }
+            },
+            "required": ["move"]
+        }
+    },
+    
+    # =========================================================================
+    # 3. Residual Damage Estimation - Hazards, weather, status
+    # =========================================================================
+    {
+        "type": "function",
+        "name": "estimate_residual_damage",
+        "description": "Estimate HP after entry hazards, weather, and status damage at the end of the current turn. Use when comparing switch vs stay-in lines.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pokemon": {
+                    "type": "object",
+                    "description": "Pokemon state (hp, maxHP, types, item, ability, status, etc.)",
+                    "properties": {
+                        "species": {"type": "string"},
+                        "current_hp": {"type": "integer"},
+                        "max_hp": {"type": "integer"},
+                        "types": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "item": {"type": "string"},
+                        "ability": {"type": "string"},
+                        "status": {"type": "string"}
+                    },
+                    "required": ["species", "current_hp", "max_hp", "types"]
+                },
+                "field_conditions": {
+                    "type": "object",
+                    "description": "Hazards and weather/status relevant to residual damage",
+                    "properties": {
+                        "isSR": {"type": "boolean"},
+                        "spikes": {"type": "integer"},
+                        "toxic_spikes": {"type": "integer"},
+                        "weather": {"type": "string"},
+                        "terrain": {"type": "string"}
+                    }
+                },
+                "is_switching_in": {
+                    "type": "boolean",
+                    "description": "Is this Pokemon switching in (hazards apply)?"
+                }
+            },
+            "required": ["pokemon"]
+        }
+    },
+    
+    # =========================================================================
+    # 4. Type Matchup - Basic type effectiveness (non-tera)
+    # =========================================================================
+    {
+        "type": "function",
+        "name": "get_type_matchup",
+        "description": "Get type effectiveness multiplier (attacking type vs defending types). Use for non-tera type checks and quick matchup evaluation. Returns multiplier (0.0=immune, 0.25=4x resist, 0.5=resist, 1.0=neutral, 2.0=super effective, 4.0=4x super effective).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "attack_type": {
+                    "type": "string",
+                    "description": "Attacking move type (e.g., 'fire', 'water', 'dragon')"
+                },
+                "defend_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Defender's types before tera (e.g., ['grass', 'poison'])"
+                }
+            },
+            "required": ["attack_type", "defend_types"]
+        }
+    },
+    
+    # =========================================================================
+    # 5. Tera Matchup - Only needed when tera changes situation
     # =========================================================================
     {
         "type": "function",
@@ -588,7 +678,7 @@ BATTLE_TOOLS = [
     },
     
     # =========================================================================
-    # 3. Speed Check with Current Modifiers
+    # 6. Speed Check with Current Modifiers
     # =========================================================================
     {
         "type": "function",
@@ -613,63 +703,6 @@ BATTLE_TOOLS = [
                 }
             },
             "required": ["pokemon_list"]
-        }
-    },
-    
-    # =========================================================================
-    # 4. Conditional Stats - After observing item/ability/move
-    # =========================================================================
-    {
-        "type": "function",
-        "name": "update_pokemon_prediction",
-        "description": "Update predictions after observing new information. Use when you've confirmed item, ability, or specific move usage. Returns revised probability distributions.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "pokemon": {
-                    "type": "string",
-                    "description": "Pokemon name"
-                },
-                "observed": {
-                    "type": "object",
-                    "description": "What was observed",
-                    "properties": {
-                        "item": {"type": "string"},
-                        "ability": {"type": "string"},
-                        "move": {"type": "string"},
-                        "tera_type": {"type": "string"},
-                        "speed_relation": {
-                            "type": "string",
-                            "description": "e.g., 'faster_than:rillaboom' or 'slower_than:tornadus'"
-                        }
-                    }
-                }
-            },
-            "required": ["pokemon", "observed"]
-        }
-    },
-    
-    # =========================================================================
-    # 5. Query Cached Info - Fallback for context retrieval
-    # =========================================================================
-    {
-        "type": "function",
-        "name": "query_cached_info",
-        "description": "Retrieve cached Pokemon info from team preview analysis. Use ONLY if specific data isn't in your context. Avoid calling for info already provided.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "pokemon": {
-                    "type": "string",
-                    "description": "Pokemon name to query"
-                },
-                "info_type": {
-                    "type": "string",
-                    "enum": ["usage_stats", "base_stats", "common_moves", "common_items", "speed_tier"],
-                    "description": "Type of information needed"
-                }
-            },
-            "required": ["pokemon", "info_type"]
         }
     }
 ]
@@ -764,11 +797,12 @@ class ToolExecutor:
         :return: Result dictionary
         """
         executors = {
-            "calculate_damage": self.calculate_showdown_damage,
+            "calculate_showdown_damage": self.calculate_showdown_damage,
+            "get_move_info": self.get_move_info,
+            "estimate_residual_damage": self.estimate_residual_damage,
+            "get_type_matchup": self.get_type_matchup,
             "get_tera_matchup": self.get_tera_matchup,
             "check_speed_order": self.check_speed_order,
-            "update_pokemon_prediction": self.update_pokemon_prediction,
-            "query_cached_info": self.query_cached_info,
         }
         
         if function_name in executors:
@@ -914,8 +948,9 @@ class ToolExecutor:
             
             # Extract relevant data
             attacker_name = result.get("attackerName", attacker['species'])
-            attacker_types = result.get("attacker", {}).get("types", [])
-            attacker_tera = result.get("attacker", {}).get("teraType", ["???"])
+            attacker_info = result.get("attacker", {})
+            attacker_types = attacker_info.get("types", [])
+            attacker_tera = attacker_info.get("teraType")  # 기본값 None
             defender_name = result.get("defenderName", defender['species'])
             defender_original_cur_hp = result.get("defender", {}).get("originalCurHP", 0)
             move_name = result.get("move", {}).get("originalName", move)
@@ -966,26 +1001,22 @@ class ToolExecutor:
         except requests.exceptions.RequestException as e:
             print(f"Showdown Damage Calculation Request Failed: {e}")
             return self.calculate_damage(
-                self,
-                attacker['species'],
-                defender['species'],
-                move,
-                attacker_tera_type=attacker.get('teraType'),
-                defender_tera_type=defender.get('teraType'),
-                field_conditions=field_conditions if field_conditions else None,
-                **kwargs
+                attacker=attacker.get('species', 'Unknown'),
+                defender=defender.get('species', 'Unknown'),
+                move=move,
+                attacker_tera_type=attacker.get('teraType') or None,
+                defender_tera_type=defender.get('teraType') or None,
+                field_conditions=field_conditions if field_conditions else None
             )
         except json.JSONDecodeError as e:
             print(f"Server response JSON decoding failed: {e}")
             return self.calculate_damage(
-                self,
-                attacker['species'],
-                defender['species'],
-                move,
-                attacker_tera_type=attacker.get('teraType'),
-                defender_tera_type=defender.get('teraType'),
-                field_conditions=field_conditions if field_conditions else None,
-                **kwargs
+                attacker=attacker.get('species', 'Unknown'),
+                defender=defender.get('species', 'Unknown'),
+                move=move,
+                attacker_tera_type=attacker.get('teraType') or None,
+                defender_tera_type=defender.get('teraType') or None,
+                field_conditions=field_conditions if field_conditions else None
             )
     
     def _calculate_type_effectiveness(
@@ -1051,7 +1082,423 @@ class ToolExecutor:
         return notes
     
     # =========================================================================
-    # Tool 2: Tera Matchup
+    # Tool 2: Move Info
+    # =========================================================================
+    def get_move_info(
+        self,
+        move: str,
+        **kwargs
+    ) -> Dict:
+        """
+        Get metadata about a move for battle decision-making.
+        
+        Returns move properties:
+        - category: Physical, Special, or Status
+        - basePower: Base power of the move (0 for status moves)
+        - priority: Priority bracket (-7 to +5)
+        - target: Targeting mode (normal, allAdjacent, allAdjacentFoes, etc.)
+        - isSpread: Whether the move hits multiple targets (affects damage)
+        - type: Move type
+        - accuracy: Move accuracy (True for never-miss moves)
+        - flags: Important flags (protect, contact, sound, etc.)
+        """
+        # Try to get move data from PKHeX.Core first (primary source)
+        move_data = None
+
+        try:
+            from src.data.gen_data import GenData
+            gen_data = GenData.from_gen(9)
+            move_id = move.lower().replace(" ", "").replace("-", "").replace("'", "")
+            gen_move_data = gen_data.moves.get(move_id, {})
+            if gen_move_data:
+                move_data = gen_move_data
+        except Exception as e:
+            print(f"Failed to load move data from GenData: {e}")
+        
+        # Final fallback to self.moves
+        if not move_data:
+            move_id = move.lower().replace(" ", "").replace("-", "").replace("'", "")
+            move_data = self.moves.get(move_id, {})
+        
+        if not move_data:
+            return {
+                "error": f"Move '{move}' not found in database",
+                "move": move,
+                "suggestion": "Check move name spelling or use exact Showdown ID"
+            }
+        
+        # Extract key metadata
+        category = move_data.get("category", "Status")
+        base_power = move_data.get("basePower", 0)
+        priority = move_data.get("priority", 0)
+        target = move_data.get("target", "normal")
+        move_type = move_data.get("type", "Normal")
+        accuracy = move_data.get("accuracy", True)  # True means never-miss
+        
+        # Determine if move is spread (hits multiple targets)
+        spread_targets = ["allAdjacent", "allAdjacentFoes", "allySide", "foeSide", "all"]
+        is_spread = target in spread_targets
+        
+        # Extract important flags
+        flags = move_data.get("flags", {})
+        important_flags = {
+            "protect": flags.get("protect", False),  # Blocked by Protect
+            "bypasssub": flags.get("bypasssub", False),  # Bypasses Substitute
+            "contact": flags.get("contact", False),  # Makes contact (triggers Rocky Helmet, etc.)
+            "sound": flags.get("sound", False),  # Sound-based move
+            "punch": flags.get("punch", False),  # Punch move (Iron Fist boost)
+            "bite": flags.get("bite", False),  # Bite move (Strong Jaw boost)
+            "bullet": flags.get("bullet", False),  # Bullet move (blocked by Bulletproof)
+            "pulse": flags.get("pulse", False),  # Pulse move (Mega Launcher boost)
+            "wind": flags.get("wind", False),  # Wind move (Wind Power/Wind Rider)
+        }
+        
+        # Get secondary effects info
+        secondary = move_data.get("secondary", {})
+        has_secondary = bool(secondary)
+        
+        # Target description for clarity
+        target_descriptions = {
+            "normal": "Single adjacent target",
+            "allAdjacent": "All adjacent Pokemon (enemies and allies)",
+            "allAdjacentFoes": "Both adjacent opponents (spread move)",
+            "adjacentAlly": "Adjacent ally only",
+            "adjacentAllyOrSelf": "Self or adjacent ally",
+            "adjacentFoe": "Adjacent opponent",
+            "allySide": "Your entire side (ally + self)",
+            "foeSide": "Opponent's entire side",
+            "all": "All Pokemon on field",
+            "self": "User only",
+            "randomNormal": "Random adjacent opponent",
+            "scripted": "Special targeting (varies by move)",
+        }
+        
+        target_desc = target_descriptions.get(target, target)
+        
+        # Compile damage reduction info for spread moves
+        spread_note = ""
+        if is_spread and category in ["Physical", "Special"]:
+            spread_note = "Damage reduced to 75% when hitting multiple targets"
+        
+        return {
+            "move": move_data.get("name", move),
+            "move_id": move_id,
+            "category": category,
+            "type": move_type,
+            "base_power": base_power,
+            "priority": priority,
+            "target": target,
+            "target_description": target_desc,
+            "is_spread": is_spread,
+            "spread_note": spread_note,
+            "accuracy": accuracy,
+            "flags": important_flags,
+            "has_secondary_effect": has_secondary,
+            "secondary_effect": secondary if has_secondary else None,
+            "notes": self._get_move_notes(move_data, category, priority, is_spread)
+        }
+    
+    def _get_move_notes(self, move_data: Dict, category: str, priority: int, is_spread: bool) -> List[str]:
+        """Generate human-readable notes about move behavior."""
+        notes = []
+        
+        # Priority notes
+        if priority > 0:
+            notes.append(f"Priority +{priority} (goes before most moves)")
+        elif priority < 0:
+            notes.append(f"Priority {priority} (goes after most moves)")
+        
+        # Category notes
+        if category == "Status":
+            notes.append("Status move (no direct damage)")
+        
+        # Spread notes
+        if is_spread and category in ["Physical", "Special"]:
+            notes.append("Spread move: 75% damage when hitting multiple targets")
+        
+        # Special move properties
+        if move_data.get("multihit"):
+            hits = move_data["multihit"]
+            if isinstance(hits, list):
+                notes.append(f"Multi-hit: {hits[0]}-{hits[1]} times")
+            else:
+                notes.append(f"Multi-hit: {hits} times")
+        
+        if move_data.get("recoil"):
+            recoil = move_data["recoil"]
+            notes.append(f"Recoil: {abs(recoil[0])}/{recoil[1]} of damage dealt")
+        
+        if move_data.get("drain"):
+            drain = move_data["drain"]
+            notes.append(f"Draining: Recovers {drain[0]}/{drain[1]} of damage dealt")
+        
+        if move_data.get("hasCrashDamage"):
+            notes.append("Crash damage if it misses")
+        
+        if move_data.get("selfdestruct"):
+            notes.append("User faints after using")
+        
+        # Protection/bypass notes
+        flags = move_data.get("flags", {})
+        if not flags.get("protect", False):
+            notes.append("Bypasses Protect/Detect")
+        
+        if flags.get("bypasssub", False):
+            notes.append("Bypasses Substitute")
+        
+        return notes
+    
+    # =========================================================================
+    # Tool 3: Residual Damage Estimation
+    # =========================================================================
+    def estimate_residual_damage(
+        self,
+        pokemon: Dict,
+        field_conditions: Optional[Dict] = None,
+        is_switching_in: bool = False,
+        **kwargs
+    ) -> Dict:
+        """
+        Estimate HP after entry hazards, weather, and status damage.
+        
+        Calculates damage from:
+        - Entry hazards (Stealth Rock, Spikes, Toxic Spikes) when switching in
+        - Weather damage (Sandstorm, Hail)
+        - Status damage (Burn, Poison, Toxic)
+        - Item recovery (Leftovers, Black Sludge)
+        - Ability effects (Dry Skin, Solar Power, etc.)
+        """
+        field_conditions = field_conditions or {}
+        
+        species = pokemon.get("species", "Unknown")
+        current_hp = pokemon.get("current_hp", 100)
+        max_hp = pokemon.get("max_hp", 100)
+        types = [t.lower() for t in pokemon.get("types", [])]
+        item = pokemon.get("item", "").lower()
+        ability = pokemon.get("ability", "").lower()
+        status = pokemon.get("status", "").lower()
+        
+        damage_sources = []
+        total_damage = 0
+        total_healing = 0
+        
+        # =====================================================================
+        # Entry Hazards (only when switching in)
+        # =====================================================================
+        if is_switching_in:
+            # Stealth Rock
+            if field_conditions.get("isSR", False):
+                # Get rock type effectiveness
+                rock_effectiveness = 1.0
+                for poke_type in types:
+                    type_chart = self.typechart.get(poke_type, {})
+                    damage_taken = type_chart.get("damageTaken", {})
+                    rock_eff = damage_taken.get("rock", 0)
+                    
+                    if rock_eff == 1:  # Super effective
+                        rock_effectiveness *= 2.0
+                    elif rock_eff == 2:  # Not very effective
+                        rock_effectiveness *= 0.5
+                    elif rock_eff == 3:  # Immune
+                        rock_effectiveness *= 0.0
+                
+                sr_damage = int(max_hp * (rock_effectiveness / 8))
+                if sr_damage > 0:
+                    total_damage += sr_damage
+                    damage_sources.append(f"Stealth Rock: -{sr_damage} HP ({rock_effectiveness}x effective)")
+            
+            # Spikes (1/8, 1/6, 1/4 for 1/2/3 layers)
+            spikes_layers = field_conditions.get("spikes", 0)
+            if spikes_layers > 0 and "flying" not in types and ability != "levitate":
+                spikes_fractions = {1: 8, 2: 6, 3: 4}
+                spikes_damage = max_hp // spikes_fractions.get(spikes_layers, 8)
+                total_damage += spikes_damage
+                damage_sources.append(f"Spikes (L{spikes_layers}): -{spikes_damage} HP")
+            
+            # Toxic Spikes (poison or badly poison)
+            toxic_spikes = field_conditions.get("toxic_spikes", 0)
+            if toxic_spikes > 0 and "poison" not in types and "steel" not in types:
+                if toxic_spikes == 1:
+                    damage_sources.append("Toxic Spikes: Poisoned")
+                elif toxic_spikes >= 2:
+                    damage_sources.append("Toxic Spikes: Badly Poisoned")
+        
+        # =====================================================================
+        # Weather Damage (every turn)
+        # =====================================================================
+        weather = field_conditions.get("weather", "").lower()
+        
+        if weather in ["sandstorm", "sand"]:
+            # Sandstorm: 1/16 damage unless Rock/Steel/Ground or specific abilities
+            if not any(t in types for t in ["rock", "steel", "ground"]):
+                if ability not in ["sandveil", "sandrush", "sandforce", "overcoat", "magicguard"]:
+                    sand_damage = max_hp // 16
+                    total_damage += sand_damage
+                    damage_sources.append(f"Sandstorm: -{sand_damage} HP")
+        
+        elif weather in ["hail", "snow"]:
+            # Hail/Snow: 1/16 damage unless Ice type or specific abilities
+            if "ice" not in types:
+                if ability not in ["icebody", "snowcloak", "overcoat", "magicguard"]:
+                    hail_damage = max_hp // 16
+                    total_damage += hail_damage
+                    damage_sources.append(f"Hail/Snow: -{hail_damage} HP")
+        
+        # =====================================================================
+        # Status Damage
+        # =====================================================================
+        if status == "brn":
+            # Burn: 1/16 damage
+            burn_damage = max_hp // 16
+            total_damage += burn_damage
+            damage_sources.append(f"Burn: -{burn_damage} HP")
+        
+        elif status in ["psn", "tox"]:
+            # Poison: 1/8 damage
+            poison_damage = max_hp // 8
+            total_damage += poison_damage
+            damage_sources.append(f"Poison: -{poison_damage} HP")
+        
+        # =====================================================================
+        # Item Recovery
+        # =====================================================================
+        if item == "leftovers":
+            leftovers_heal = max_hp // 16
+            total_healing += leftovers_heal
+            damage_sources.append(f"Leftovers: +{leftovers_heal} HP")
+        
+        elif item == "blacksludge":
+            if "poison" in types:
+                sludge_heal = max_hp // 16
+                total_healing += sludge_heal
+                damage_sources.append(f"Black Sludge: +{sludge_heal} HP")
+            else:
+                sludge_damage = max_hp // 8
+                total_damage += sludge_damage
+                damage_sources.append(f"Black Sludge: -{sludge_damage} HP (not Poison type)")
+        
+        # =====================================================================
+        # Ability Effects
+        # =====================================================================
+        if ability == "icebody" and weather in ["hail", "snow"]:
+            ice_body_heal = max_hp // 16
+            total_healing += ice_body_heal
+            damage_sources.append(f"Ice Body: +{ice_body_heal} HP")
+        
+        elif ability == "raindish" and weather in ["rain", "raindance"]:
+            rain_dish_heal = max_hp // 16
+            total_healing += rain_dish_heal
+            damage_sources.append(f"Rain Dish: +{rain_dish_heal} HP")
+        
+        elif ability == "dryskin":
+            if weather in ["rain", "raindance"]:
+                dry_skin_heal = max_hp // 8
+                total_healing += dry_skin_heal
+                damage_sources.append(f"Dry Skin (Rain): +{dry_skin_heal} HP")
+            elif weather in ["sun", "sunnyday", "desolateland"]:
+                dry_skin_damage = max_hp // 8
+                total_damage += dry_skin_damage
+                damage_sources.append(f"Dry Skin (Sun): -{dry_skin_damage} HP")
+        
+        elif ability == "solarpower" and weather in ["sun", "sunnyday", "desolateland"]:
+            solar_power_damage = max_hp // 8
+            total_damage += solar_power_damage
+            damage_sources.append(f"Solar Power: -{solar_power_damage} HP")
+        
+        # =====================================================================
+        # Calculate Final HP
+        # =====================================================================
+        net_damage = total_damage - total_healing
+        predicted_hp = max(0, current_hp - net_damage)
+        hp_percent = round((predicted_hp / max_hp) * 100, 1) if max_hp > 0 else 0
+        
+        return {
+            "species": species,
+            "current_hp": current_hp,
+            "predicted_hp": predicted_hp,
+            "max_hp": max_hp,
+            "hp_percent": hp_percent,
+            "damage_taken": total_damage,
+            "healing_received": total_healing,
+            "net_damage": net_damage,
+            "will_faint": predicted_hp <= 0,
+            "damage_sources": damage_sources,
+            "is_switching_in": is_switching_in,
+            "summary": f"{species}: {current_hp} → {predicted_hp} HP ({hp_percent}%)"
+        }
+    
+    # =========================================================================
+    # Tool 4: Basic Type Matchup
+    # =========================================================================
+    def get_type_matchup(
+        self,
+        attack_type: str,
+        defend_types: List[str],
+        **kwargs
+    ) -> Dict:
+        """
+        Calculate type effectiveness multiplier for attacking type vs defending types.
+        Simple, fast type chart lookup - no damage calculation needed.
+        
+        Returns:
+            {
+                "attack_type": "fire",
+                "defend_types": ["grass", "poison"],
+                "multiplier": 2.0,
+                "effectiveness": "super_effective",
+                "explanation": "Fire is super effective against Grass"
+            }
+        """
+        attack_type = attack_type.lower()
+        defend_types = [t.lower() for t in defend_types]
+        
+        # Calculate overall multiplier
+        multiplier = 1.0
+        contributing_factors = []
+        
+        for def_type in defend_types:
+            type_chart = self.typechart.get(def_type, {})
+            damage_taken = type_chart.get("damageTaken", {})
+            eff_value = damage_taken.get(attack_type, 0)
+            
+            if eff_value == 1:  # Super effective
+                multiplier *= 2.0
+                contributing_factors.append(f"{attack_type.capitalize()} is super effective against {def_type.capitalize()}")
+            elif eff_value == 2:  # Not very effective
+                multiplier *= 0.5
+                contributing_factors.append(f"{attack_type.capitalize()} is not very effective against {def_type.capitalize()}")
+            elif eff_value == 3:  # Immune
+                multiplier *= 0.0
+                contributing_factors.append(f"{def_type.capitalize()} is immune to {attack_type.capitalize()}")
+        
+        # Determine effectiveness category
+        if multiplier == 0.0:
+            effectiveness = "immune"
+        elif multiplier <= 0.25:
+            effectiveness = "4x_resisted"
+        elif multiplier == 0.5:
+            effectiveness = "resisted"
+        elif multiplier == 1.0:
+            effectiveness = "neutral"
+        elif multiplier == 2.0:
+            effectiveness = "super_effective"
+        elif multiplier >= 4.0:
+            effectiveness = "4x_super_effective"
+        else:
+            effectiveness = "neutral"
+        
+        explanation = "; ".join(contributing_factors) if contributing_factors else "Neutral damage"
+        
+        return {
+            "attack_type": attack_type,
+            "defend_types": defend_types,
+            "multiplier": multiplier,
+            "effectiveness": effectiveness,
+            "explanation": explanation
+        }
+    
+    # =========================================================================
+    # Tool 3: Tera Matchup
     # =========================================================================
     def get_tera_matchup(
         self,
@@ -1241,180 +1688,163 @@ class ToolExecutor:
         
         return notes
     
-    # =========================================================================
-    # Tool 4: Update Pokemon Prediction
-    # =========================================================================
-    def update_pokemon_prediction(
-        self,
-        pokemon: str,
-        observed: Dict,
-        **kwargs
-    ) -> Dict:
-        """
-        Update predictions after observing new information.
-        Uses Bayesian-style reasoning to narrow down possibilities.
-        """
-        # Get current predictions from cache
-        usage_stats = self.cache.get(pokemon, "usage_stats") or {}
-        
-        result = {
-            "pokemon": pokemon,
-            "observed": observed,
-            "inferences": [],
-            "updated_probabilities": {}
-        }
-        
-        # If item observed, update move/ability probabilities
-        if observed.get("item"):
-            item = observed["item"]
-            result["inferences"].append(f"Item confirmed: {item}")
-            
-            # Choice item implications
-            if "choice" in item.lower():
-                result["inferences"].append("Locked into one move per switch-in")
-                result["inferences"].append("Likely max Speed or Attack EVs")
-            elif "assault vest" in item.lower():
-                result["inferences"].append("Cannot use status moves")
-                result["inferences"].append("Likely specially defensive")
-            elif "focus sash" in item.lower():
-                result["inferences"].append("Will survive one hit from full HP")
-                result["inferences"].append("Possibly glass cannon set")
-        
-        # If ability observed
-        if observed.get("ability"):
-            ability = observed["ability"]
-            result["inferences"].append(f"Ability confirmed: {ability}")
-            
-            # Ability implications
-            ability_lower = ability.lower()
-            if "intimidate" in ability_lower:
-                result["inferences"].append("Physical attacks weakened by 1 stage")
-            elif "prankster" in ability_lower:
-                result["inferences"].append("Status moves have +1 priority")
-            elif "defiant" in ability_lower:
-                result["inferences"].append("Attack +2 when stats lowered")
-        
-        # If move observed
-        if observed.get("move"):
-            move = observed["move"]
-            result["inferences"].append(f"Move known: {move}")
-            
-            # Move set implications
-            common_moves = usage_stats.get("moves", [])
-            if common_moves:
-                remaining = [m for m in common_moves if m["move"].lower() != move.lower()]
-                result["updated_probabilities"]["likely_moves"] = remaining[:5]
-        
-        # If speed relation observed
-        if observed.get("speed_relation"):
-            relation = observed["speed_relation"]
-            result["inferences"].append(f"Speed relation: {relation}")
-            
-            # Update speed estimate
-            if "faster_than:" in relation:
-                benchmark = relation.split(":")[1]
-                result["inferences"].append(f"Faster than {benchmark} - likely Speed investment")
-            elif "slower_than:" in relation:
-                benchmark = relation.split(":")[1]
-                result["inferences"].append(f"Slower than {benchmark} - possibly bulky/Trick Room set")
-        
-        # If tera type observed
-        if observed.get("tera_type"):
-            tera = observed["tera_type"]
-            result["inferences"].append(f"Tera type confirmed: {tera}")
-            result["inferences"].append("Consider new type matchups for remaining turns")
-        
-        return result
-    
-    # =========================================================================
-    # Tool 5: Query Cached Info
-    # =========================================================================
-    def query_cached_info(
-        self,
-        pokemon: str,
-        info_type: str,
-        **kwargs
-    ) -> Dict:
-        """
-        Retrieve cached info from team preview.
-        Use sparingly - most data should already be in context.
-        """
-        valid_types = ["usage_stats", "base_stats", "common_moves", "common_items", "speed_tier"]
-        
-        if info_type not in valid_types:
-            return {"error": f"Invalid info_type. Must be one of: {valid_types}"}
-        
-        cached_data = self.cache.get(pokemon, info_type)
-        
-        if cached_data:
-            return {
-                "pokemon": pokemon,
-                "info_type": info_type,
-                "data": cached_data,
-                "source": "team_preview_cache"
-            }
-        else:
-            return {
-                "pokemon": pokemon,
-                "info_type": info_type,
-                "data": None,
-                "error": "Not found in cache. Data may not have been collected during team preview."
-            }
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
+if __name__ == "__main__":
+    executor = ToolExecutor()
+    # Example usage
+    move_info = executor.get_move_info("fakeout")
+    print(json.dumps(move_info, indent=2))
 
-def get_tool_names() -> List[str]:
-    """Get list of available tool names."""
-    return [tool["name"] for tool in BATTLE_TOOLS]
+    data = {
+  "attacker": {
+    "species": "torkoal",
+    "level": 100,
+    "ability": "drought",
+    "teraType": "FIRE",
+    "item": "choicespecs",
+    "nature": "Modest",
+    "isSaltCure": False,
+    "alliesFainted": 1,
+    "originalCurHP": 2,
+    "boosts": {
+      "atk": 0,
+      "def": 0,
+      "spa": 1,
+      "spd": 0,
+      "spe": 0
+    },
+    "ivs": {
+      "hp": 31,
+      "atk": 0,
+      "def": 0,
+      "spa": 31,
+      "spd": 0,
+      "spe": 0
+    },
+    "evs": {
+      "hp": 0,
+      "atk": 0,
+      "def": 0,
+      "spa": 252,
+      "spd": 0,
+      "spe": 0
+    },
+    "status": "brn",
+    "toxicCounter": 0
+  },
+  "defender": {
+    "species": "ursaluna",
+    "level": 100,
+    "ability": "",
+    "teraType": "",
+    "item": "unknown_item",
+    "nature": "",
+    "isSaltCure": False,
+    "alliesFainted": 0,
+    "originalCurHP": 1,
+    "boosts": {
+      "atk": 0,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 0
+    },
+    "ivs": {
+      "hp": 31,
+      "atk": 31,
+      "def": 31,
+      "spa": 31,
+      "spd": 31,
+      "spe": 31
+    },
+    "evs": {
+      "hp": 0,
+      "atk": 0,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 0
+    },
+    "status": "brn",
+    "toxicCounter": 0
+  },
+  "move": "eruption",
+  "field_conditions": {
+    "gameType": "Doubles",
+    "terrain": "Psychic",
+    "weather": "Sunny",
+    "isMagicRoom": False,
+    "isWonderRoom": False,
+    "isGravity": False,
+    "isAuraBreak": False,
+    "isFairyAura": False,
+    "isDarkAura": False,
+    "isBeadsOfRuin": False,
+    "isSwordOfRuin": False,
+    "isTabletsOfRuin": False,
+    "isVesselOfRuin": False,
+    "attackerSide": {
+      "spikes": 0,
+      "steelsurge": False,
+      "vinelash": False,
+      "wildfire": False,
+      "cannonade": False,
+      "volcalith": False,
+      "isSR": False,
+      "isReflect": False,
+      "isLightScreen": False,
+      "isProtected": False,
+      "isSeeded": False,
+      "isForesight": False,
+      "isTailwind": False,
+      "isHelpingHand": False,
+      "isFlowerGift": False,
+      "isFriendGuard": False,
+      "isAuroraVeil": False,
+      "isBattery": False,
+      "isPowerSpot": False,
+      "isSwitching": None
+    },
+    "defenderSide": {
+      "spikes": 0,
+      "steelsurge": False,
+      "vinelash": False,
+      "wildfire": False,
+      "cannonade": False,
+      "volcalith": False,
+      "isSR": False,
+      "isReflect": False,
+      "isLightScreen": False,
+      "isProtected": False,
+      "isSeeded": False,
+      "isForesight": False,
+      "isTailwind": False,
+      "isHelpingHand": False,
+      "isFlowerGift": False,
+      "isFriendGuard": False,
+      "isAuroraVeil": False,
+      "isBattery": False,
+      "isPowerSpot": False,
+      "isSwitching": None
+    }
+  }
+}
+    calculation = executor.calculate_showdown_damage(
+        data["attacker"],
+        data["defender"],
+        data["move"],
+        data["field_conditions"],
+    )
 
+    print(json.dumps(calculation, indent=2))
 
-def get_tool_by_name(name: str) -> Optional[Dict]:
-    """Get tool definition by name."""
-    for tool in BATTLE_TOOLS:
-        if tool["name"] == name:
-            return tool
-    return None
-
-
-def get_battle_tools_summary() -> str:
-    """Get a summary of available battle tools for debugging."""
-    summary = []
-    for tool in BATTLE_TOOLS:
-        summary.append(f"- {tool['name']}: {tool['description'][:50]}...")
-    return "\n".join(summary)
-
-
-# =============================================================================
-# Tool Optimization Helpers
-# =============================================================================
-
-def should_call_tool(tool_name: str, context: Dict) -> bool:
-    """
-    Determine if a tool call is necessary given current context.
-    Helps prevent redundant calls.
-    
-    :param tool_name: Name of tool being considered
-    :param context: Current battle context with cached info
-    :return: True if tool call would provide new information
-    """
-    cached_data = context.get("cached_data", {})
-    
-    if tool_name == "query_cached_info":
-        # Only call if data isn't already in context
-        pokemon = context.get("query_pokemon", "")
-        info_type = context.get("query_type", "")
-        return not cached_data.get(pokemon, {}).get(info_type)
-    
-    if tool_name == "get_tera_matchup":
-        # Only needed if tera actually changed
-        return context.get("tera_changed", False)
-    
-    if tool_name == "check_speed_order":
-        # Only needed if field conditions changed since last check
-        return context.get("field_changed", False)
-    
-    # calculate_damage and update_pokemon_prediction are always useful
-    return True
+    matchup_data = {
+  "attack_type": "POISON",
+  "defend_types": [
+    "GRASS",
+    "FAIRY"
+  ]
+}
+    type_matchup = executor.get_type_matchup(attack_type=matchup_data["attack_type"], defend_types=matchup_data["defend_types"])
+    print(json.dumps(type_matchup, indent=2))

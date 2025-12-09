@@ -3,9 +3,11 @@ PochampsPlayer - Custom Pokemon Battle AI using OpenAI API.
 Implements parallel strategy evaluation with function calling.
 """
 
+import copy
 import json
 import os
 import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1921,7 +1923,6 @@ class PochampsPlayer(Player):
         # Log configuration after super().__init__() so logger is available
         if self.base_url:
             self.logger.info(f"Using custom API endpoint: {self.base_url}")
-        self.logger.info(f"Models - Fast: {self.fast_model}, Normal: {self.backend}, Deep: {self.deep_model}")
         
         # Load debug cache after initialization
         if debug_mode:
@@ -2016,7 +2017,17 @@ class PochampsPlayer(Player):
             if tools:
                 params["tools"] = tools
             
-            response = self.client.responses.create(**params)
+            # Log params for debugging (hide full messages)
+            debug_params = {k: (f"<{len(v)} items>" if k == "input" else v) for k, v in params.items()}
+            print(f"[API CALL] params: {debug_params}")
+            self.logger.info(f"[API CALL] Creating response with params: {debug_params}")
+            
+            try:
+                response = self.client.responses.create(**params)
+            except Exception as e:
+                # Log full stack so 500 errors show the call path
+                self.logger.exception("LLM call failed (model=%s): %s", model, e)
+                raise
             
             # Track tokens
             usage = None
@@ -2082,7 +2093,17 @@ class PochampsPlayer(Player):
         if tools:
             params["tools"] = tools
         
-        response = self.client.responses.create(**params)
+        # Log params for debugging
+        debug_params = {k: (f"<{len(v)} items>" if k == "input" else v) for k, v in params.items()}
+        print(f"[API FOLLOWUP] params: {debug_params}")
+        self.logger.info(f"[API FOLLOWUP] Creating response with params: {debug_params}")
+        
+        try:
+            response = self.client.responses.create(**params)
+        except Exception as e:
+            # Log full stack for troubleshooting follow-up failures
+            self.logger.exception("Follow-up LLM call failed (model=%s, prev_id=%s): %s", model, previous_response_id, e)
+            raise
         
         # Track tokens
         usage = None
@@ -2417,6 +2438,111 @@ class PochampsPlayer(Player):
             return ""
         return name.lower().replace(" ", "").replace("-", "").replace("'", "")
 
+    def _sanitize_for_json(self, obj):
+        """Recursively sanitize objects for JSON serialization."""
+        from src.environment.pokemon_type import PokemonType
+        
+        if isinstance(obj, PokemonType):
+            return obj.name
+        elif isinstance(obj, dict):
+            return {k: self._sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._sanitize_for_json(item) for item in obj]
+        elif hasattr(obj, '__dict__'):
+            # Handle objects with __dict__ but skip internal/complex objects
+            if type(obj).__name__ in ('Pokemon', 'Move', 'Field', 'Weather'):
+                return str(obj)
+            return obj
+        else:
+            return obj
+
+    def _build_prompt_payload(
+        self,
+        battle_context: Dict,
+        state: Optional[BattleState]
+    ) -> Dict:
+        """Build enriched payload for the fast strategy prompt."""
+        # Work on a deep copy to avoid mutating shared battle_context
+        bc = copy.deepcopy(battle_context)
+        
+        # Sanitize for JSON serialization (convert PokemonType enums, etc.)
+        bc = self._sanitize_for_json(bc)
+
+        # Fill missing move/item info for active mons using available_switches_detailed
+        switches_detail = bc.get("available_switches_detailed") or []
+        flat_candidates = []
+        for side in switches_detail:
+            if side:
+                flat_candidates.extend(side)
+
+        if flat_candidates:
+            for mon in bc.get("my_active", []) or []:
+                if mon.get("moves"):
+                    continue
+                species = str(mon.get("species", "")).lower()
+                if not species:
+                    continue
+                candidate = next((c for c in flat_candidates if str(c.get("species", "")).lower() == species), None)
+                if candidate:
+                    if candidate.get("moves"):
+                        mon["moves"] = candidate["moves"]
+                    # Backfill useful fields if missing/empty
+                    for key in ("item", "ability", "types", "tera_type"):
+                        if mon.get(key) in (None, [], "") and key in candidate:
+                            mon[key] = candidate[key]
+
+        # Secondary backfill: use parsed team builder info for my team
+        if getattr(self, "_my_team_info", None):
+            for mon in bc.get("my_active", []) or []:
+                if mon.get("moves"):
+                    continue
+                species = str(mon.get("species", "")).lower()
+                if not species:
+                    continue
+                team_entry = next((c for c in self._my_team_info if str(c.get("species", "")).lower() == species), None)
+                if team_entry:
+                    if team_entry.get("moves"):
+                        mon["moves"] = team_entry["moves"]
+                    for key in ("item", "ability", "types", "tera_type"):
+                        if mon.get(key) in (None, [], "") and key in team_entry:
+                            mon[key] = team_entry[key]
+
+        payload: Dict[str, Any] = {"battle_context": bc}
+
+        # Add structured battle state (strategy, history, field)
+        if state:
+            try:
+                payload["battle_state"] = state.to_gpt_context()
+            except Exception as e:
+                self.logger.debug(f"Fast payload battle_state error: {e}")
+
+            # Include team preview cache contents so fast prompt can see scouting data
+            try:
+                cache_summary = state.team_preview_cache.summary()
+                payload["team_preview_cache_summary"] = cache_summary
+
+                cache_data: Dict[str, Any] = {}
+                for species_key in cache_summary.keys():
+                    cache_data[species_key] = state.team_preview_cache.get_all(species_key)
+                payload["team_preview_cache"] = cache_data
+            except Exception as e:
+                self.logger.debug(f"Fast payload cache error: {e}")
+
+        # Add opponent inference map (probabilistic info)
+        if self._opponent_info:
+            try:
+                payload["opponent_inferred"] = [info.to_dict() for info in self._opponent_info.values()]
+            except Exception as e:
+                self.logger.debug(f"Fast payload opponent_inferred error: {e}")
+
+        # Lightweight human-readable summary
+        try:
+            payload["context_summary"] = self._summarize_gpt_context(battle_context)
+        except Exception as e:
+            payload["context_summary"] = f"summary_error: {e}"
+
+        return payload
+
     # =========================================================================
     # Parallel GPT Strategies
     # =========================================================================
@@ -2425,20 +2551,29 @@ class PochampsPlayer(Player):
         self,
         battle_tag: str,
         battle_context: Dict,
+        state: Optional[BattleState] = None,
         tools: Optional[List[Dict]] = None,
         timeout: float = None
     ) -> Dict[str, str]:
         """
         Call 3 strategies in parallel: fast, normal, deep.
-        Each strategy builds its own prompt from battle_context.
+        Fast strategy receives enriched payload (battle_context + caches + state).
         Returns responses that complete within timeout.
         """
-        self.logger.info(f"Turn {battle_context.get('turn', 1)}: Executing parallel strategies")
+        # Removed duplicate log - strategies log their own execution
         if not self.client:
             self.logger.error("OpenAI client not initialized.")
             return {}
         
         timeout = timeout or self.global_timeout
+
+        # Enrich prompt for fast strategy with full player state
+        try:
+            battle_payload = self._build_prompt_payload(battle_context, state)
+        except Exception as e:
+            self.logger.error(f"Failed to build battle payload: {e}", exc_info=True)
+            # Fallback to minimal payload
+            battle_payload = {"battle_context": self._sanitize_for_json(battle_context)}
         
         # Submit all strategies
         futures = {
@@ -2446,10 +2581,10 @@ class PochampsPlayer(Player):
                 call_fast_strategy,
                 client=self.client,
                 battle_tag=battle_tag,
-                battle_context=battle_context,
+                battle_context=battle_payload,
                 model=self.fast_model,  # Configurable (default: backend)
                 temperature=0.3,
-                max_tokens=150,
+                max_tokens=1500,
                 battle_response_ids=self._battle_response_ids,
                 token_tracker=self._tokens,
                 tools=tools
@@ -2458,10 +2593,10 @@ class PochampsPlayer(Player):
                 call_normal_strategy,
                 client=self.client,
                 battle_tag=battle_tag,
-                battle_context=battle_context,
+                battle_context=battle_payload,
                 model=self.backend,
                 temperature=self.temperature,
-                max_tokens=300,
+                max_tokens=3000,
                 battle_response_ids=self._battle_response_ids,
                 token_tracker=self._tokens,
                 tool_executor=self.tool_executor,
@@ -2471,16 +2606,15 @@ class PochampsPlayer(Player):
                 call_deep_strategy,
                 client=self.client,
                 battle_tag=battle_tag,
-                battle_context=battle_context,
+                battle_context=battle_payload,
                 model=self.deep_model,  # Configurable (default: backend)
                 temperature=self.temperature,
-                max_tokens=500,
+                max_tokens=50000,
                 battle_response_ids=self._battle_response_ids,
                 token_tracker=self._tokens,
                 tool_executor=self.tool_executor,
                 progress_tracker=self._strategy_progress,
                 tools=tools,
-                reasoning_effort="high"
             ): "deep"
         }
         
@@ -2571,6 +2705,51 @@ class PochampsPlayer(Player):
                 "input": [{"role": "user", "content": synthesis_prompt}],
                 "max_output_tokens": 400,
                 "temperature": 0.2,  # Low temp for consistent decisions
+                "text":{
+                    "format": {
+                    "type": "json_schema",
+                    "name": "turn_decision",
+                    "schema": {
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "synthesis_reasoning": {"type": "string"},
+                                "slot1": {"$ref": "#/$defs/slot_action"},
+                                "slot2": {"$ref": "#/$defs/slot_action"}
+                            },
+                            "required": ["slot1", "slot2"],
+                            "additionalProperties": False,
+                            "$defs": {
+                                "slot_action": {
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "action": {"const": "move"},
+                                                "move": {"type": "string"},
+                                                "target": {"type": "integer", "enum": [-1, 0, 1, 2]},
+                                                "terastallize": {"type": "boolean"}
+                                            },
+                                            "required": ["action", "move"],
+                                            "additionalProperties": False
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "action": {"const": "switch"},
+                                                "pokemon": {"type": "string"}
+                                            },
+                                            "required": ["action", "pokemon"],
+                                            "additionalProperties": False
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                    }
+                }
             }
             
             response = self.client.responses.create(**request_params)
@@ -2641,6 +2820,12 @@ class PochampsPlayer(Player):
                 if slot not in resp:
                     continue
                 slot_data = resp[slot]
+                
+                # Handle case where slot_data is a string instead of dict
+                if isinstance(slot_data, str):
+                    summary += f"  {slot}: {slot_data}\n"
+                    continue
+                
                 action = slot_data.get("action", "?")
                 
                 if action == "move":
@@ -2663,15 +2848,53 @@ class PochampsPlayer(Player):
         # Build context summary with DETAILED move information per slot
         context_summary = ""
         if battle_context:
+            # Work on a copy and backfill missing move info from switches/team builder
+            bc = copy.deepcopy(battle_context)
+            switches_detail = bc.get("available_switches_detailed") or []
+            flat_candidates = []
+            for side in switches_detail:
+                if side:
+                    flat_candidates.extend(side)
+
+            if flat_candidates:
+                for mon in bc.get("my_active", []) or []:
+                    if mon.get("moves"):
+                        continue
+                    species = str(mon.get("species", "")).lower()
+                    if not species:
+                        continue
+                    candidate = next((c for c in flat_candidates if str(c.get("species", "")).lower() == species), None)
+                    if candidate:
+                        if candidate.get("moves"):
+                            mon["moves"] = candidate["moves"]
+                        for key in ("item", "ability", "types", "tera_type"):
+                            if mon.get(key) in (None, [], "") and key in candidate:
+                                mon[key] = candidate[key]
+
+            if getattr(self, "_my_team_info", None):
+                for mon in bc.get("my_active", []) or []:
+                    if mon.get("moves"):
+                        continue
+                    species = str(mon.get("species", "")).lower()
+                    if not species:
+                        continue
+                    team_entry = next((c for c in self._my_team_info if str(c.get("species", "")).lower() == species), None)
+                    if team_entry:
+                        if team_entry.get("moves"):
+                            mon["moves"] = team_entry["moves"]
+                        for key in ("item", "ability", "types", "tera_type"):
+                            if mon.get(key) in (None, [], "") and key in team_entry:
+                                mon[key] = team_entry[key]
+
             context_summary = f"""
 CURRENT BATTLE STATE:
-- Turn: {battle_context.get('turn', '?')}
-- Force Switch: {battle_context.get('force_switch', [False, False])}
+- Turn: {bc.get('turn', '?')}
+- Force Switch: {bc.get('force_switch', [False, False])}
 """
             # Add DETAILED active Pokemon info with available moves
-            if battle_context.get('my_active'):
+            if bc.get('my_active'):
                 context_summary += "\n=== YOUR ACTIVE POKEMON (USE ONLY THESE MOVES!) ===\n"
-                for p in battle_context['my_active']:
+                for p in bc['my_active']:
                     if isinstance(p, dict):
                         slot_num = p.get('slot', '?')
                         species = p.get('species', '?')
@@ -2683,11 +2906,18 @@ CURRENT BATTLE STATE:
                         if moves:
                             context_summary += "  AVAILABLE MOVES:\n"
                             for m in moves:
-                                move_id = m.get('id', '?')
-                                move_type = m.get('type', '?')
-                                category = m.get('category', '?')
-                                bp = m.get('base_power', 0) or '-'
-                                targets = m.get('valid_targets', [0])
+                                if isinstance(m, dict):
+                                    move_id = m.get('id', m.get('name', '?'))
+                                    move_type = m.get('type', '?')
+                                    category = m.get('category', '?')
+                                    bp = m.get('base_power', 0) or '-'
+                                    targets = m.get('valid_targets', [0])
+                                else:
+                                    move_id = str(m)
+                                    move_type = '?'
+                                    category = '?'
+                                    bp = '-'
+                                    targets = [0]
                                 
                                 # Determine target type from move data
                                 target_info = ""
@@ -2704,7 +2934,7 @@ CURRENT BATTLE STATE:
                         else:
                             context_summary += "  (No moves available - must switch)\n"
             
-            if battle_context.get('opponent_active'):
+            if bc.get('opponent_active'):
                 context_summary += "\n=== OPPONENT ACTIVE ===\n"
                 for p in battle_context['opponent_active']:
                     if isinstance(p, dict):
@@ -2728,34 +2958,81 @@ CURRENT BATTLE STATE:
 
 You have received recommendations from 3 different analysis strategies.
 Synthesize these into ONE optimal final decision.
+
+- Fast strategy: Quick tactical assessment (low cost, shallow).
+- Normal strategy: Balanced analysis with limited tool usage.
+- Deep strategy: Thorough iterative analysis (highest ceiling but can time out or be unstable).
+
+STRATEGY PRIORITY:
+1) If the Deep strategy recommendation is well-formed, legal, and does not break any rules below,
+   you SHOULD PREFER Deep, since it explores future turns more thoroughly.
+2) If Deep is missing, invalid, clearly illegal, or self-destructive, FALL BACK to Normal,
+   as the main, stable default.
+3) Only if BOTH Deep and Normal produce unusable/illegal decisions, THEN fall back to Fast.
+4) If multiple valid strategies remain, choose the one that:
+   - Respects all legality and ally-safety rules below, and
+   - Keeps the best overall board position (not throwing away the game for small gain).
+
 {context_summary}
 {chr(10).join(strategy_summaries)}
 
 ══════════════════════════════════════════════════════════════
 ⚠️ CRITICAL VALIDATION RULES ⚠️
 
-1. **USE ONLY AVAILABLE MOVES**: Each slot can ONLY use moves listed under their AVAILABLE MOVES!
-   - Slot 1 (e.g., Incineroar) can ONLY use Incineroar's moves
-   - Slot 2 (e.g., Gholdengo) can ONLY use Gholdengo's moves
-   - DO NOT MIX UP which Pokemon has which moves!
+1. USE ONLY AVAILABLE MOVES:
+   - Each slot can ONLY use moves listed under its own AVAILABLE MOVES.
+   - Slot 1 can ONLY use Slot 1’s moves.
+   - Slot 2 can ONLY use Slot 2’s moves.
+   - DO NOT MIX UP which Pokemon has which moves.
+   - If a slot has no usable moves or force_switch for that slot is True, that slot MUST switch.
 
-2. **SPREAD MOVES (NO TARGET)**: Moves marked "⚠️ NO TARGET" CANNOT have a target!
-   - hypervoice, makeitrain, earthquake, heatwave, dazzlinggleam, etc.
-   - OMIT the "target" field entirely OR use target: 0
-   - Server REJECTS "You can't choose a target for X" if you specify target
+2. TARGET RULES:
+   - Single-target offensive moves:
+     • target = 1 (left opponent)
+     • target = 2 (right opponent)
+   - Ally target:
+     • target = -1 (ally partner)
+   - Spread / self / targetless moves:
+     • Use target = 0 OR OMIT the target field entirely.
+   - NEVER use any string like "omit" for target; target MUST be an integer when present.
 
-3. **SINGLE TARGET MOVES**: target=1 (opponent left), target=2 (opponent right)
+3. SPREAD MOVES (NO TARGET):
+   - Moves that naturally hit multiple Pokemon (e.g., hypervoice, makeitrain, earthquake,
+     heatwave, dazzlinggleam, etc.) must NOT specify a single-opponent target.
+   - For these, use target: 0 OR omit the target field entirely.
+   - The server will reject choices like: “You can't choose a target for X” if you specify target 1 or 2.
 
-4. **FORCE SWITCH**: If force_switch=[True, X], that slot MUST use action="switch"
+4. FORCE SWITCH:
+   - If force_switch = [True, X] or force_switch = [X, True] for a given slot,
+     that slot MUST use action="switch".
+   - The "pokemon" chosen for a switch MUST be one of the valid bench options listed for that slot.
+
+5. ALLY-SAFETY RULE (VERY IMPORTANT):
+   - You MUST NOT choose single-target damaging moves that intentionally target the ally (target = -1).
+   - Allowed ally targets:
+     • Legitimate ally-targeting support/status moves (e.g., Helping Hand, Follow Me/Rage Powder,
+       Ally Switch, healing, defensive buffs, etc.).
+     • Spread moves where hitting the ally is an unavoidable side effect (earthquake, surf, etc.)
+       and you are using target = 0 or omitting the target.
+   - If a move is single-target and damaging, its target MUST be 1 or 2 (opponents), NOT -1.
+   - When in doubt, prefer attacking opponents or using safe support/self moves over harming allies.
+
+6. GENERAL LEGALITY:
+   - Do NOT invent moves, Pokemon, items, or targets that are not present in the provided context.
+   - Do NOT mix move and switch fields in the same slot.
+   - Ensure both slot1 and slot2 decisions are internally consistent and executable by the battle server.
 
 ══════════════════════════════════════════════════════════════
 
 OUTPUT FORMAT (JSON only, no explanation outside JSON):
 {{
-    "synthesis_reasoning": "<brief explanation>",
-    "slot1": {{"action": "move"|"switch", "move": "<move_id>", "target": <1|2|omit_for_spread>}},
-    "slot2": {{"action": "move"|"switch", "move": "<move_id>", "target": <1|2|omit_for_spread>}}
+    "synthesis_reasoning": "<brief explanation of which strategy you followed and why>",
+    "slot1": {{"action": "move", "move": "<move_id>", "target": 0|1|2|-1}}
+             OR {{"action": "switch", "pokemon": "<bench_name>"}},
+    "slot2": {{"action": "move", "move": "<move_id>", "target": 0|1|2|-1}}
+             OR {{"action": "switch", "pokemon": "<bench_name>"}}
 }}
+
 """
         return prompt
     
@@ -2929,6 +3206,7 @@ OUTPUT FORMAT (JSON only, no explanation outside JSON):
             self.call_parallel_strategies,
             battle_tag=battle.battle_tag,
             battle_context=battle_context,
+            state=state,
             tools=BATTLE_TOOLS,
             timeout=self.global_timeout
         )
@@ -2960,22 +3238,40 @@ OUTPUT FORMAT (JSON only, no explanation outside JSON):
                             self.logger.info(f"  {slot_key}: MOVE {move} -> target={target}{tera_str}")
                         elif action == "switch":
                             pokemon = slot_data.get("pokemon", "?")
+
+                            # If GPT omitted the switch target, infer the first available switch for this slot
+                            if (not pokemon or pokemon == "?") and hasattr(battle, "available_switches"):
+                                slot_switches = []
+                                if isinstance(battle.available_switches, list) and battle.available_switches:
+                                    if isinstance(battle.available_switches[0], list):
+                                        slot_switches = battle.available_switches[i] if i < len(battle.available_switches) else []
+                                    else:
+                                        slot_switches = battle.available_switches
+                                if slot_switches:
+                                    pokemon = slot_switches[0].species
+                                    slot_data["pokemon"] = pokemon
                             self.logger.info(f"  {slot_key}: SWITCH to {pokemon}")
                         else:
                             self.logger.info(f"  {slot_key}: {action} {slot_data}")
             
             # Pass the content (parsed dict) to parser
+            print(f"[DEBUG] Calling _parse_doubles_decision with content: {best.get('content', {})}")
             orders = self._parse_doubles_decision(best.get("content", {}), battle, turn_log)
+            print(f"[DEBUG] _parse_doubles_decision returned: {orders}")
             if orders:
+                print(f"[DEBUG] Orders valid, finalizing turn log")
                 # Finalize and store turn log
                 self._finalize_turn_log(battle.battle_tag, turn_log, orders)
                 return orders
+            else:
+                print(f"[DEBUG] Orders is None/False - parse failed")
             
             # =====================================================================
             # Step 3.5: RETRY - If parse failed, send feedback and get new response
             # (Does NOT re-run analysis - just asks for corrected decision)
             # =====================================================================
             validation = turn_log.decision_validation or {}
+            print(f"[DEBUG] Validation dict: {validation}")
             if validation.get("needs_retry"):
                 print(f"  [RETRY] Invalid decision - requesting correction (not re-running analysis)")
                 retry_feedback = self._build_retry_feedback(validation, battle)
@@ -2996,9 +3292,19 @@ OUTPUT FORMAT (JSON only, no explanation outside JSON):
                         return orders
         
         # Fallback to random
+        print(f"[DEBUG] Falling back to random move - GPT decision/parse failed")
+        self.logger.error("[CRITICAL] All strategies failed - using random fallback")
         turn_log.final_decision = "FALLBACK: Random move (GPT failed)"
         turn_log.selected_strategy = "random_fallback"
-        random_order = self.choose_random_doubles_move(battle)
+        
+        # Use safe random that respects ally-safety rules
+        try:
+            random_order = self.choose_random_doubles_move(battle)
+        except Exception as e:
+            self.logger.error(f"Random fallback also failed: {e}")
+            # Ultimate fallback - default order
+            random_order = self.create_order(battle.available_moves[0]) if battle.available_moves else ForfeitBattleOrder()
+        
         self._finalize_turn_log(battle.battle_tag, turn_log, random_order)
         return random_order
     
@@ -3692,6 +3998,9 @@ Be precise. Only include inferences with probability >= 60.0."""
         if not isinstance(force_switch, list):
             force_switch = [False, False]
         
+        # Check if we've already used Terastallization this battle
+        team_tera_used = any(p.terastallized for p in battle.team.values())
+        
         context = {
             "turn": battle.turn,
             "force_switch": force_switch,  # [slot1_must_switch, slot2_must_switch]
@@ -3699,6 +4008,7 @@ Be precise. Only include inferences with probability >= 60.0."""
             "opponent_active": [],
             "my_team": [],
             "opponent_revealed": [],
+            "tera_available": not team_tera_used,  # Can we still Terastallize this battle?
             "field": {
                 "weather": str(battle.weather) if battle.weather else None,
                 "terrain": str(battle.fields) if battle.fields else None
@@ -3761,6 +4071,11 @@ Be precise. Only include inferences with probability >= 60.0."""
                             "valid_targets": targets  # Showdown target indices
                         })
                 
+                # Check if team has already used Terastallization
+                team_tera_used = any(
+                    p.terastallized for p in battle.team.values()
+                )
+                
                 pokemon_data = {
                     "slot": i + 1,
                     "species": pokemon.species,
@@ -3772,7 +4087,7 @@ Be precise. Only include inferences with probability >= 60.0."""
                     "types": [t.name for t in pokemon.types if t],
                     "tera_type": pokemon._terastallized_type.name if pokemon._terastallized_type else None,
                     "terastallized": pokemon.terastallized,
-                    "can_terastallize": battle.can_tera[i] if i < len(battle.can_tera) else False
+                    "can_terastallize": (battle.can_tera[i] if i < len(battle.can_tera) else False) and not team_tera_used
                 }
                 
                 # Add state tracking info
@@ -4026,6 +4341,7 @@ Be precise. Only include inferences with probability >= 60.0."""
         - When battle.force_switch is [False, True], only slot 2 needs to switch
         - GPT might send switch commands for both slots - we must ignore extras!
         """
+        print(f"[DEBUG _parse_doubles_decision] Entry: response type={type(response)}, response={response}")
         validation_log = []  # Track validation actions
         
         try:
@@ -4034,6 +4350,7 @@ Be precise. Only include inferences with probability >= 60.0."""
                 decision = response
             else:
                 decision = json.loads(response)
+            print(f"[DEBUG _parse_doubles_decision] Parsed decision: {decision}")
             
             orders: List[Optional[BattleOrder]] = [None, None]
             used_switches: set = set()  # Track Pokemon already chosen for switch
@@ -4113,7 +4430,35 @@ Be precise. Only include inferences with probability >= 60.0."""
                     
                     move_id = slot_data.get("move", "").lower()
                     target = slot_data.get("target", 0)
-                    tera = slot_data.get("terastallize", False)
+                    tera_requested = slot_data.get("terastallize", False)
+                    
+                    # =====================================================
+                    # CRITICAL: Validate Terastallization
+                    # =====================================================
+                    # Check if we can actually Terastallize:
+                    # 1. Team hasn't used tera yet this battle
+                    # 2. This specific Pokemon can tera (can_tera flag)
+                    # 3. Pokemon isn't already terastallized
+                    team_tera_used = any(p.terastallized for p in battle.team.values())
+                    can_tera_now = (
+                        not team_tera_used and
+                        i < len(battle.can_tera) and
+                        battle.can_tera[i] and
+                        i < len(battle.active_pokemon) and
+                        battle.active_pokemon[i] and
+                        not battle.active_pokemon[i].terastallized
+                    )
+                    
+                    tera = tera_requested and can_tera_now
+                    
+                    if tera_requested and not can_tera_now:
+                        validation_log.append({
+                            "slot": i + 1,
+                            "action": "terastallize_blocked",
+                            "reason": "team_tera_used" if team_tera_used else "cannot_tera",
+                            "message": f"Slot {i+1} requested tera but cannot (team_used={team_tera_used}, can_tera={battle.can_tera[i] if i < len(battle.can_tera) else False})"
+                        })
+                        print(f"  [TERA BLOCK] Slot{i+1} requested terastallize but cannot (team_used={team_tera_used})")
                     
                     # Find the move in available moves for this slot
                     if i < len(battle.available_moves) and battle.available_moves[i]:
@@ -4151,6 +4496,19 @@ Be precise. Only include inferences with probability >= 60.0."""
                 
                 elif action_type == "switch":
                     pokemon_name = slot_data.get("pokemon", "").lower()
+
+                    # If GPT omitted pokemon, pick the first available switch for this slot
+                    if not pokemon_name:
+                        inferred_switches = []
+                        if isinstance(battle.available_switches, list) and battle.available_switches:
+                            if isinstance(battle.available_switches[0], list):
+                                inferred_switches = battle.available_switches[i] if i < len(battle.available_switches) else []
+                            else:
+                                inferred_switches = battle.available_switches
+                        if inferred_switches:
+                            pokemon_name = inferred_switches[0].species.lower()
+                            # Also propagate back to decision dict for logging/debug
+                            slot_data["pokemon"] = inferred_switches[0].species
                     
                     # =========================================================
                     # CRITICAL: Check if trying to switch to already-active Pokemon
@@ -4307,6 +4665,7 @@ Be precise. Only include inferences with probability >= 60.0."""
                                         break
             
             # Build DoubleBattleOrder - also validate no duplicate switches
+            print(f"[DEBUG _parse_doubles_decision] Building final order: orders[0]={orders[0]}, orders[1]={orders[1]}")
             if orders[0] and orders[1]:
                 # Final check: if both are switches to same Pokemon, invalidate second
                 first_is_switch = hasattr(orders[0].order, 'species') and not hasattr(orders[0].order, 'base_power')
@@ -4317,18 +4676,28 @@ Be precise. Only include inferences with probability >= 60.0."""
                         orders[1] = None
                 
                 if orders[1]:
+                    print(f"[DEBUG _parse_doubles_decision] Returning DoubleBattleOrder with both orders")
                     return DoubleBattleOrder(first_order=orders[0], second_order=orders[1])
                 else:
+                    print(f"[DEBUG _parse_doubles_decision] Returning DoubleBattleOrder with first_order only")
                     return DoubleBattleOrder(first_order=orders[0])
             elif orders[0]:
+                print(f"[DEBUG _parse_doubles_decision] Returning DoubleBattleOrder with first_order")
                 return DoubleBattleOrder(first_order=orders[0])
             elif orders[1]:
+                print(f"[DEBUG _parse_doubles_decision] Returning DoubleBattleOrder with second_order")
                 return DoubleBattleOrder(second_order=orders[1])
+            
+            print(f"[DEBUG _parse_doubles_decision] No valid orders built - falling through to return None")
                 
         except Exception as e:
+            print(f"[DEBUG _parse_doubles_decision] Exception caught: {e}")
             self.logger.error(f"Parse doubles error: {e}")
+            import traceback
+            traceback.print_exc()
             if turn_log:
                 turn_log.decision_validation = {"error": str(e)}
+        print(f"[DEBUG _parse_doubles_decision] Returning None at end")
         return None
     
     def _validate_move_target(
@@ -4522,7 +4891,6 @@ Be precise. Only include inferences with probability >= 60.0."""
         super().update_team(team)
         # 팀이 설정되면 즉시 파싱해서 저장
         self._my_team_info = self._parse_team_from_builder()
-        self.logger.info(f"Team loaded: {len(self._my_team_info)} pokemon")
     
     def _parse_team_from_builder(self) -> List[Dict]:
         """팀빌더에서 내 팀 정보 파싱 (실제 파싱 로직)."""

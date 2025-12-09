@@ -6,3 +6,5 @@
 env/
 venv/
 */node_modules/*
+battle_log/*
+*.log

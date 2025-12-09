@@ -45,6 +45,10 @@ class DoubleBattle(AbstractBattle):
         self._force_switch: List[bool] = [False, False]
         self._maybe_trapped: List[bool] = [False, False]
         self._trapped: List[bool] = [False, False]
+        
+        # Move target info from request (indexed by [slot][move_index])
+        # Contains the raw target strings from Showdown (e.g., "normal", "self", "adjacentFoe", etc.)
+        self._move_targets: List[List[Dict[str, Any]]] = [[], []]
 
         # Battle state attributes
         self._active_pokemon: Dict[str, Pokemon] = {}
@@ -107,6 +111,7 @@ class DoubleBattle(AbstractBattle):
 
         self._available_moves = [[], []]
         self._available_switches = [[], []]
+        self._move_targets = [[], []]  # Reset move targets from request
         self._can_mega_evolve = [False, False]
         self._can_z_move = [False, False]
         self._can_dynamax = [False, False]
@@ -132,6 +137,18 @@ class DoubleBattle(AbstractBattle):
         if side["pokemon"]:
             self._player_role = side["pokemon"][0]["ident"][:2]
         self._update_team_from_request(side)
+
+        # DEBUG: Log request keys and active info
+        import sys
+        has_active = "active" in request
+        active_len = len(request.get("active", [])) if has_active else 0
+        print(f"  [REQUEST DEBUG] Turn {self.turn}, keys: {list(request.keys())}, has_active: {has_active}, active_count: {active_len}", flush=True)
+        if has_active and active_len > 0:
+            for i, active in enumerate(request["active"]):
+                moves = [m.get("id", m.get("move", "?")) for m in active.get("moves", [])]
+                targets = [m.get("target", "?") for m in active.get("moves", [])]
+                print(f"    Active[{i}] moves: {moves}, targets: {targets}", flush=True)
+            sys.stdout.flush()
 
         if "active" in request:
             for active_pokemon_number, active_request in enumerate(request["active"]):
@@ -177,15 +194,35 @@ class DoubleBattle(AbstractBattle):
                             self._active_pokemon[f"{self.player_role}a"],
                         )
 
+                # DEBUG: Log active pokemon fainted status
+                print(f"    Parsing active[{active_pokemon_number}]: {active_pokemon.species}, fainted={active_pokemon.fainted}, hp={active_pokemon.current_hp_fraction if hasattr(active_pokemon, 'current_hp_fraction') else '?'}", flush=True)
+
                 if active_pokemon.fainted:
+                    print(f"      SKIPPING fainted pokemon!", flush=True)
                     continue
 
                 if active_request.get("trapped"):
                     self._trapped[active_pokemon_number] = True
 
+                avail_moves = active_pokemon.available_moves_from_request(active_request)
+                print(f"      available_moves_from_request returned: {[m.id for m in avail_moves]}", flush=True)
                 self._available_moves[
                     active_pokemon_number
-                ] = active_pokemon.available_moves_from_request(active_request)
+                ] = avail_moves
+                
+                # Store move target info from request
+                # This is the AUTHORITATIVE source from Showdown server
+                move_targets = []
+                for move_data in active_request.get("moves", []):
+                    move_info = {
+                        "id": move_data.get("id", move_data.get("move", "")),
+                        "target": move_data.get("target", "normal"),
+                        "disabled": move_data.get("disabled", False),
+                        "pp": move_data.get("pp", 0),
+                        "maxpp": move_data.get("maxpp", 0),
+                    }
+                    move_targets.append(move_info)
+                self._move_targets[active_pokemon_number] = move_targets
 
                 if active_request.get("canMegaEvo", False):
                     self._can_mega_evolve[active_pokemon_number] = True
@@ -361,6 +398,16 @@ class DoubleBattle(AbstractBattle):
         :rtype: List[List[Move]]
         """
         return self._available_moves
+
+    @property
+    def move_targets(self) -> List[List[Dict[str, Any]]]:
+        """
+        :return: A list of two lists of move target info from the Showdown request.
+            Each move has: id, target (e.g., "normal", "self", "adjacentFoe"), disabled, pp, maxpp
+            This is the AUTHORITATIVE source for move targeting.
+        :rtype: List[List[Dict[str, Any]]]
+        """
+        return self._move_targets
 
     @property
     def available_switches(self) -> List[List[Pokemon]]:

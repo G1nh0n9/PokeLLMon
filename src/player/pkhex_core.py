@@ -16,12 +16,9 @@ dll_path = os.path.join(current_dir, "PKHeX.Core.dll")
 if not os.path.exists(dll_path):
     raise FileNotFoundError(f"PKHeX.Core.dll not found at: {dll_path}")
 
-print(f"Loading DLL from: {dll_path}")
-
 # DLL 로드 (절대 경로 사용)
 try:
     clr.AddReference(dll_path)
-    print("DLL loaded successfully")
 except Exception as e:
     print(f"Failed to load DLL: {e}")
     raise
@@ -31,7 +28,6 @@ try:
     from PKHeX.Core import *
     import System
     from System.Reflection import BindingFlags
-    print("PKHeX.Core namespace imported successfully")
 except Exception as e:
     print(f"Failed to import PKHeX.Core: {e}")
     print("Available assemblies:")
@@ -68,6 +64,91 @@ class PokemonDataExtractor:
         self.ability_names = Util.GetAbilitiesList(language)
         self.item_names = Util.GetItemsList(language)
         self.type_names = Util.GetTypesList(language)
+
+    def get_move_id(self, move_name: str) -> Optional[int]:
+        """
+        기술 이름으로 기술 번호 찾기
+
+        Args:
+            move_name: 기술 이름 (한글 또는 영어)
+
+        Returns:
+            기술 번호 (move ID), 찾지 못하면 None
+        """
+        move_name_lower = move_name.lower().replace(" ", "").replace("-", "").replace("'", "")
+        for i, name in enumerate(self.move_names):
+            if name.lower().replace(" ", "").replace("-", "").replace("'", "") == move_name_lower:
+                return i
+        return None
+
+    def get_move_info(self, move_name: str) -> Optional[Dict]:
+        """
+        기술의 상세 정보 가져오기 (gen9moves.json 사용)
+
+        Args:
+            move_name: 기술 이름
+
+        Returns:
+            기술 정보 딕셔너리 또는 None
+            {
+                "name": str,
+                "move_id": int,
+                "type": str,
+                "category": str (Physical/Special/Status),
+                "base_power": int,
+                "accuracy": int,
+                "pp": int,
+                "priority": int,
+                "target": str,
+                "flags": Dict[str, bool]
+            }
+        """
+        # gen9moves.json 파일에서 기술 데이터 로드
+        try:
+            import json
+            moves_file = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                "data", "static", "moves", "gen9moves.json"
+            )
+            
+            if not os.path.exists(moves_file):
+                print(f"Move data file not found: {moves_file}")
+                return None
+            
+            with open(moves_file, "r", encoding="utf-8") as f:
+                moves_data = json.load(f)
+            
+            # 기술 이름 정규화
+            move_name_normalized = move_name.lower().replace(" ", "").replace("-", "").replace("'", "")
+            
+            # gen9moves.json에서 기술 찾기
+            move_data = moves_data.get(move_name_normalized)
+            if not move_data:
+                print(f"Move '{move_name}' not found in gen9moves.json")
+                return None
+            
+            # 기술 ID 가져오기
+            move_id = self.get_move_id(move_name)
+            
+            return {
+                "name": move_data.get("name", move_name),
+                "move_id": move_id if move_id else 0,
+                "type": move_data.get("type", "Unknown"),
+                "category": move_data.get("category", "Unknown"),
+                "base_power": move_data.get("basePower", 0),
+                "accuracy": move_data.get("accuracy", 100),
+                "pp": move_data.get("pp", 0),
+                "priority": move_data.get("priority", 0),
+                "target": move_data.get("target", "normal"),
+                "flags": move_data.get("flags", {}),
+                "desc": move_data.get("desc", move_data.get("shortDesc", ""))
+            }
+            
+        except Exception as e:
+            print(f"Failed to get move info for '{move_name}': {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def get_species_id(self, pokemon_name: str) -> Optional[int]:
         """
@@ -377,6 +458,21 @@ def get_pokemon_info(pokemon_name: str, language: str = "en") -> Optional[Dict]:
     """
     extractor = get_extractor(language)
     return extractor.get_pokemon_info(pokemon_name)
+
+
+def get_move_info(move_name: str, language: str = "en") -> Optional[Dict]:
+    """
+    기술 정보 가져오기 (편의 함수)
+
+    Args:
+        move_name: 기술 이름
+        language: 언어 코드 (기본값: "en")
+
+    Returns:
+        기술 정보 딕셔너리 또는 None
+    """
+    extractor = get_extractor(language)
+    return extractor.get_move_info(move_name)
 
 
 # 테스트 코드

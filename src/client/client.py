@@ -144,6 +144,12 @@ class Client:
         :param message: The message to parse.
         :type message: str
         """
+        # Log received message to player-specific file
+        log_filename = f"server_{self.username.replace(' ', '_')}.log"
+        with open(log_filename, "a", encoding="utf-8") as f:
+            f.write(f"<<< RECV: {message}\n")
+        self.logger.warning(f"[RECV] {message[:200]}...")  # Log first 200 chars to console
+        
         try:
             # Showdown websocket messages are pipe-separated sequences
             split_messages = [m.split("|") for m in message.split("\n")]
@@ -188,15 +194,15 @@ class Client:
                     if split_messages[0][4].startswith("/challenge"):
                         await self._handle_challenge_request(split_messages[0])  # type: ignore
                     elif split_messages[0][4].startswith("/text"):
-                        self.logger.info("Received pm with text: %s", message)
+                        pass
                     elif split_messages[0][4].startswith("/nonotify"):
-                        self.logger.info("Received pm: %s", message)
+                        pass
                     elif split_messages[0][4].startswith("/log"):
-                        self.logger.info("Received pm: %s", message)
+                        pass
                     else:
                         self.logger.warning("Received pm: %s", message)
                 elif len(split_messages) == 2:
-                    self.logger.info("Received pm: %s", message)
+                    pass
                 else:
                     raise ValueError(
                         f"Expected len({split_messages}) to be 1 or 2, got {len(split_messages)}"
@@ -226,7 +232,6 @@ class Client:
 
     async def listen(self):
         """Listen to a showdown websocket and dispatch messages to be handled."""
-        self.logger.info("Starting listening to showdown websocket")
         try:
             async with ws.connect(
                 self.websocket_url,
@@ -272,10 +277,8 @@ class Client:
                     "challstr": split_message[2] + "%7C" + split_message[3],
                 },
             )
-            self.logger.info("Sending authentication request")
             assertion = json.loads(log_in_request.text[1:])["assertion"]
         else:
-            self.logger.info("Bypassing authentication request")
             assertion = ""
 
         await self.send_message(f"/trn {self.username},0,{assertion}")
@@ -306,8 +309,9 @@ class Client:
             to_send = "|".join([room, message])
         # Log sent message to player-specific file
         log_filename = f"server_{self.username.replace(' ', '_')}.log"
-        with open(log_filename, "a") as f:
+        with open(log_filename, "a", encoding="utf-8") as f:
             f.write(f">>> SEND: {to_send}\n")
+        self.logger.warning(f"[SEND] {to_send}")
         await self.websocket.send(to_send)
 
     async def set_team(self, packed_team: Optional[str]):

@@ -250,7 +250,6 @@ class Player(ABC):
             
             # If in cleanup mode, forfeit this stale battle instead of creating it
             if self._cleanup_mode and battle_tag not in self._battles:
-                self.logger.info(f"[CLEANUP] Detected stale battle session: {battle_tag}, will forfeit")
                 self._stale_battles_to_forfeit.add(battle_tag)
                 # Send forfeit command immediately
                 await self.ps_client.forfeit_battle(battle_tag)
@@ -661,6 +660,12 @@ class Player(ABC):
                     "[Invalid choice] Can't move: You can only Terastallize once per battle."
                 ):
                     await self._handle_battle_request(battle, maybe_default_order=True)
+                elif (
+                    split_message[2].startswith("[Invalid choice] Can't switch: You do not have a")
+                    and "to switch to" in split_message[2]
+                ):
+                    # Handle invalid switch target (e.g., wrong Pokemon name)
+                    await self._handle_battle_request(battle, maybe_default_order=True)
                 else:
                     self.logger.critical("Unexpected error message: %s", split_message)
             elif split_message[1] == "turn":
@@ -842,8 +847,13 @@ class Player(ABC):
 
     def choose_random_doubles_move(self, battle: DoubleBattle) -> BattleOrder:
         active_orders: List[List[BattleOrder]] = [[], []]
+        
+        # Check force_switch status for each slot
+        force_switch = getattr(battle, 'force_switch', [False, False])
+        if not isinstance(force_switch, list):
+            force_switch = [False, False]
 
-        for (
+        for slot_idx, (
             orders,
             mon,
             switches,
@@ -852,7 +862,7 @@ class Player(ABC):
             can_z_move,
             can_dynamax,
             can_tera,
-        ) in zip(
+        ) in enumerate(zip(
             active_orders,
             battle.active_pokemon,
             battle.available_switches,
@@ -861,62 +871,71 @@ class Player(ABC):
             battle.can_z_move,
             battle.can_dynamax,
             battle.can_tera,
-        ):
+        )):
             if mon:
-                targets = {
-                    move: battle.get_possible_showdown_targets(move, mon)
-                    for move in moves
-                }
-                orders.extend(
-                    [
-                        BattleOrder(move, move_target=target)
+                # Filter switches to only our own team members to avoid invalid commands
+                valid_switches = [s for s in switches if s in battle.team.values()]
+                
+                # If this slot MUST switch (force_switch), only add switch orders
+                if force_switch[slot_idx]:
+                    orders.extend([BattleOrder(switch) for switch in valid_switches])
+                else:
+                    # Normal turn - add move orders (switches are optional strategy, not required)
+                    targets = {
+                        move: battle.get_possible_showdown_targets(move, mon)
                         for move in moves
-                        for target in targets[move]
-                    ]
-                )
-                orders.extend([BattleOrder(switch) for switch in switches])
-
-                if can_mega:
+                    }
                     orders.extend(
                         [
-                            BattleOrder(move, move_target=target, mega=True)
-                            for move in moves
-                            for target in targets[move]
-                        ]
-                    )
-                if can_z_move:
-                    available_z_moves = set(mon.available_z_moves)
-                    orders.extend(
-                        [
-                            BattleOrder(move, move_target=target, z_move=True)
-                            for move in moves
-                            for target in targets[move]
-                            if move in available_z_moves
-                        ]
-                    )
-
-                if can_dynamax:
-                    orders.extend(
-                        [
-                            BattleOrder(move, move_target=target, dynamax=True)
+                            BattleOrder(move, move_target=target)
                             for move in moves
                             for target in targets[move]
                         ]
                     )
 
-                if can_tera:
-                    orders.extend(
-                        [
-                            BattleOrder(move, move_target=target, terastallize=True)
-                            for move in moves
-                            for target in targets[move]
-                        ]
-                    )
+                    if can_mega:
+                        orders.extend(
+                            [
+                                BattleOrder(move, move_target=target, mega=True)
+                                for move in moves
+                                for target in targets[move]
+                            ]
+                        )
+                    if can_z_move:
+                        available_z_moves = set(mon.available_z_moves)
+                        orders.extend(
+                            [
+                                BattleOrder(move, move_target=target, z_move=True)
+                                for move in moves
+                                for target in targets[move]
+                                if move in available_z_moves
+                            ]
+                        )
 
-                if sum(battle.force_switch) == 1:
-                    if orders:
-                        return orders[int(random.random() * len(orders))]
-                    return self.choose_default_move()
+                    if can_dynamax:
+                        orders.extend(
+                            [
+                                BattleOrder(move, move_target=target, dynamax=True)
+                                for move in moves
+                                for target in targets[move]
+                            ]
+                        )
+
+                    if can_tera:
+                        orders.extend(
+                            [
+                                BattleOrder(move, move_target=target, terastallize=True)
+                                for move in moves
+                                for target in targets[move]
+                            ]
+                        )
+
+        # Handle single force switch case (one slot must switch, other can move)
+        if sum(force_switch) == 1:
+            forced_slot = force_switch.index(True)
+            if active_orders[forced_slot]:
+                return active_orders[forced_slot][int(random.random() * len(active_orders[forced_slot]))]
+            return self.choose_default_move()
 
         orders = DoubleBattleOrder.join_orders(*active_orders)
 
@@ -1061,7 +1080,6 @@ class Player(ABC):
         self, opponent: str, n_challenges: int, to_wait: Optional[Event] = None
     ):
         await self.ps_client.logged_in.wait()
-        self.logger.info("Event logged in received in send challenge")
 
         if to_wait is not None:
             await to_wait.wait()
@@ -1126,7 +1144,6 @@ class Player(ABC):
                          Defaults to 2.0 seconds.
         :type wait_time: float
         """
-        self.logger.info(f"[CLEANUP] Enabling cleanup mode for {wait_time}s to forfeit stale sessions...")
         self._cleanup_mode = True
         self._stale_battles_to_forfeit.clear()
         
@@ -1135,12 +1152,6 @@ class Player(ABC):
         
         # Disable cleanup mode
         self._cleanup_mode = False
-        
-        # Log results
-        if self._stale_battles_to_forfeit:
-            self.logger.info(f"[CLEANUP] Forfeited {len(self._stale_battles_to_forfeit)} stale battle(s): {self._stale_battles_to_forfeit}")
-        else:
-            self.logger.info("[CLEANUP] No stale sessions detected.")
         
         # Clear the set for next time
         self._stale_battles_to_forfeit.clear()

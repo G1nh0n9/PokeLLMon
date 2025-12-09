@@ -48,8 +48,11 @@ npm start
 ```
 
 ### Local Battles
+.env file would like to be
+OPENAI_API_KEY="sk-proj-****"
+
 ```sh
-python src/main.py # fill in your username and password for PokeLLMon
+C:/Users/gimhc/Github/PokeLLMon/.venv/Scripts/python.exe -m src.main2 --n_battles 1 --backend gpt-4o-mini-2024-07-18 --fast_model gpt-4o-mini-2024-07-18 --deep_model gpt-5.1-2025-11-13
 ``` 
 
 ### Suggestions
