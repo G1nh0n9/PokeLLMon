@@ -34,8 +34,11 @@ Enter "http://localhost:8000/" in your browsers.
 Get OPENAI API from https://platform.openai.com/account/api-keys
 
 ```sh
-export OPENAI_API_KEY=<your key>
+export OPENAI_API_KEY="sk-proj-****"
 ```
+or
+.env file would like to be
+OPENAI_API_KEY="sk-proj-****"
 
 ### Showdown Calculator SeverSetup & Run
 1. Navigate into the server directory and install the required Node.js dependencies
@@ -48,18 +51,10 @@ npm start
 ```
 
 ### Local Battles
-.env file would like to be
-OPENAI_API_KEY="sk-proj-****"
-
-```sh
-C:/Users/gimhc/Github/PokeLLMon/.venv/Scripts/python.exe -m src.main2 --n_battles 1 --backend gpt-4o-mini-2024-07-18 --fast_model gpt-4o-mini-2024-07-18 --deep_model gpt-5.1-2025-11-13
-``` 
-
-### Suggestions
 assume .venv is at root (Python 3.11.9)
 ```sh
 pip install -r requirements.txt
-$env:PYTHONPATH = ".."; $env:OPENAI_API_KEY = "OPENAI_API_KEY"; python main.py
-```
+PokeLLMon/.venv/Scripts/python.exe -m src.main2 --n_battles 1 --backend gpt-4o-mini-2024-07-18 --fast_model gpt-4o-mini-2024-07-18 --deep_model gpt-5.1-2025-11-13
+``` 
 
 
