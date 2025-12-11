@@ -24,6 +24,7 @@ openai >= 1.7.2
 git clone https://github.com/smogon/pokemon-showdown.git
 cd pokemon-showdown
 npm install
+npm install pg --save --legacy-peer-deps
 cp config/config-example.js config/config.js
 node pokemon-showdown start --no-security
 Enter "http://localhost:8000/" in your browsers.
@@ -52,6 +53,7 @@ npm start
 
 ### Local Battles
 assume .venv is at root (Python 3.11.9)
+install dotnet (https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
 ```sh
 pip install -r requirements.txt
 PokeLLMon/.venv/Scripts/python.exe -m src.main2 --n_battles 1 --backend gpt-4o-mini-2024-07-18 --fast_model gpt-4o-mini-2024-07-18 --deep_model gpt-5.1-2025-11-13

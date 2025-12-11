@@ -2700,54 +2700,41 @@ class PochampsPlayer(Player):
         
         try:
             # Use fast model for quick synthesis (this should be fast)
+            # Note: OpenAI structured outputs don't support oneOf, so we use a flat schema
+            # with all fields and action as discriminator (move/switch)
+            slot_action_schema = {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["move", "switch"]},
+                    "move": {"type": ["string", "null"]},
+                    "target": {"type": ["integer", "null"]},
+                    "terastallize": {"type": ["boolean", "null"]},
+                    "pokemon": {"type": ["string", "null"]}
+                },
+                "required": ["action"],
+                "additionalProperties": False
+            }
+            
             request_params = {
                 "model": self.fast_model,
                 "input": [{"role": "user", "content": synthesis_prompt}],
                 "max_output_tokens": 400,
                 "temperature": 0.2,  # Low temp for consistent decisions
-                "text":{
+                "text": {
                     "format": {
-                    "type": "json_schema",
-                    "name": "turn_decision",
-                    "schema": {
+                        "type": "json_schema",
+                        "name": "turn_decision",
                         "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {
                                 "synthesis_reasoning": {"type": "string"},
-                                "slot1": {"$ref": "#/$defs/slot_action"},
-                                "slot2": {"$ref": "#/$defs/slot_action"}
+                                "slot1": slot_action_schema,
+                                "slot2": slot_action_schema
                             },
-                            "required": ["slot1", "slot2"],
-                            "additionalProperties": False,
-                            "$defs": {
-                                "slot_action": {
-                                    "oneOf": [
-                                        {
-                                            "type": "object",
-                                            "properties": {
-                                                "action": {"const": "move"},
-                                                "move": {"type": "string"},
-                                                "target": {"type": "integer", "enum": [-1, 0, 1, 2]},
-                                                "terastallize": {"type": "boolean"}
-                                            },
-                                            "required": ["action", "move"],
-                                            "additionalProperties": False
-                                        },
-                                        {
-                                            "type": "object",
-                                            "properties": {
-                                                "action": {"const": "switch"},
-                                                "pokemon": {"type": "string"}
-                                            },
-                                            "required": ["action", "pokemon"],
-                                            "additionalProperties": False
-                                        }
-                                    ]
-                                }
-                            }
+                            "required": ["synthesis_reasoning", "slot1", "slot2"],
+                            "additionalProperties": False
                         }
-                    }
                     }
                 }
             }

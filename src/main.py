@@ -63,39 +63,6 @@ parser.add_argument("--debug", action="store_true",
                     help="Debug mode: use fixed teams (first 2 from pool) and cache GPT responses to avoid API costs.")
 args = parser.parse_args()
 
-"""
-async def main():
-    battle_format = "gen8randombattle"
-    heuristic_player = HeuristicsPlayer(battle_format=battle_format)
-
-    os.makedirs(args.log_dir, exist_ok=True)
-
-    llm_player = LLMPlayer(battle_format=battle_format,
-                           api_key=os.getenv("OPENAI_API_KEY"),
-                           backend=args.backend,
-                           temperature=args.temperature,
-                           prompt_algo=args.prompt_algo,
-                           log_dir=args.log_dir,
-                           # account_configuration=AccountConfiguration("Your_account", "Your_password"),
-                           save_replays=args.log_dir
-                           )
-
-    # dynamax is disabled for local battles.
-    heuristic_player._dynamax_disable = True
-    llm_player._dynamax_disable = True
-
-    # play against bot for five battles
-    for i in tqdm(range(5)):
-        x = np.random.randint(0, 100)
-        if x > 50:
-            await heuristic_player.battle_against(llm_player, n_battles=1)
-        else:
-            await llm_player.battle_against(heuristic_player, n_battles=1)
-        for battle_id, battle in llm_player.battles.items():
-            with open(f"{args.log_dir}/{battle_format}_{args.backend}_{args.prompt_algo}_{battle_id}.pkl", "wb") as f:
-                pkl.dump(battle, f)
-"""
-
 async def main():
     battle_format = "gen9vgc2025regh"
     os.makedirs(args.log_dir, exist_ok=True)
@@ -346,110 +313,12 @@ async def main2():
         print("[SHUTDOWN] Bot stopped.")
 
 
-async def main3():
-    """
-    Ladder mode: Search for random opponents on the ladder.
-    The bot will continuously search for battles on the ranked ladder.
-    
-    Usage:
-        python -m src.main --mode ladder --username "YourBotName" --password "YourPassword"
-    """
-    battle_format = "gen9vgc2025regh"
-    os.makedirs(args.log_dir, exist_ok=True)
-    
-    # Get credentials from args or environment
-    username = getattr(args, 'username', None) or os.getenv("PS_USERNAME")
-    password = getattr(args, 'password', None) or os.getenv("PS_PASSWORD")
-    
-    if not username or not password:
-        print("[ERROR] Username and password required for ladder play!")
-        print("  Set PS_USERNAME and PS_PASSWORD environment variables, or use --username and --password args")
-        return
-    
-    print(f"\n{'='*60}")
-    print(f"LADDER MODE - Searching for opponents")
-    print(f"{'='*60}")
-    print(f"  Username: {username}")
-    print(f"  Battle Format: {battle_format}")
-    print(f"  Number of battles: {args.n_battles}")
-    print(f"Model Configuration:")
-    print(f"  - Backend (Normal): {args.backend}")
-    print(f"  - Fast Model: {args.fast_model or args.backend}")
-    print(f"  - Deep Model: {args.deep_model or args.backend}")
-    print(f"{'='*60}\n")
-    
-    from src.client import AccountConfiguration
-    
-    bot_player = PochampsPlayer(
-        battle_format=battle_format,
-        api_key=os.getenv("OPENAI_API_KEY"),
-        backend=args.backend,
-        fast_model=args.fast_model,
-        deep_model=args.deep_model,
-        base_url=args.base_url,
-        temperature=args.temperature,
-        log_dir=args.log_dir,
-        save_replays=args.log_dir,
-        open_team_sheets=args.open_team_sheets,
-        debug_mode=args.debug,
-        account_configuration=AccountConfiguration(username, password),
-    )
-    
-    bot_player._dynamax_disable = True
-    
-    # Load team
-    import json
-    teams_json_path = "src/data/gen9vgc2025regh_team.json"
-    with open(teams_json_path, "r", encoding="utf-8") as f:
-        all_teams = json.load(f)
-    
-    team_idx = random.randint(0, len(all_teams) - 1)
-    team = all_teams[team_idx]["showdown"]
-    print(f"Using team index {team_idx}")
-    print(f"Team: {team.split(chr(10))[0][:60]}...\n")
-    bot_player.update_team(team)
-    
-    # Wait for login
-    print("[INIT] Logging in to Pokemon Showdown...")
-    await bot_player.ps_client.wait_for_login()
-    print(f"[INIT] Logged in as: {username}")
-    
-    await bot_player.cleanup_stale_sessions(wait_time=3.0)
-    print("[INIT] Ready to ladder!\n")
-    
-    try:
-        # Ladder mode - search for random opponents
-        print(f"[LADDER] Starting {args.n_battles} ladder battles...")
-        await bot_player.ladder(n_games=args.n_battles)
-        print(f"\n[LADDER] Completed {args.n_battles} battles!")
-        
-        # Print stats
-        wins = sum(1 for b in bot_player.battles.values() if b.won)
-        losses = sum(1 for b in bot_player.battles.values() if b.lost)
-        print(f"[STATS] Wins: {wins}, Losses: {losses}, Win Rate: {wins/(wins+losses)*100:.1f}%")
-        
-    except KeyboardInterrupt:
-        print("\n[SHUTDOWN] Received interrupt signal...")
-    except Exception as e:
-        print(f"\n[ERROR] Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        print("[CLEANUP] Forfeiting all active battles...")
-        try:
-            await bot_player.forfeit_all_battles()
-        except:
-            pass
-        print("[SHUTDOWN] Bot stopped.")
-
-
 if __name__ == "__main__":
     # Check if mode argument exists
     mode = getattr(args, 'mode', 'local')
     
     if mode == 'online':
         asyncio.get_event_loop().run_until_complete(main2())
-    elif mode == 'ladder':
-        asyncio.get_event_loop().run_until_complete(main3())
+
     else:
         asyncio.get_event_loop().run_until_complete(main())
