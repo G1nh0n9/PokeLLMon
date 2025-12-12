@@ -2702,6 +2702,7 @@ class PochampsPlayer(Player):
             # Use fast model for quick synthesis (this should be fast)
             # Note: OpenAI structured outputs don't support oneOf, so we use a flat schema
             # with all fields and action as discriminator (move/switch)
+
             slot_action_schema = {
                 "type": "object",
                 "properties": {
@@ -2711,9 +2712,10 @@ class PochampsPlayer(Player):
                     "terastallize": {"type": ["boolean", "null"]},
                     "pokemon": {"type": ["string", "null"]}
                 },
-                "required": ["action"],
+                "required": ["action", "move", "target", "terastallize", "pokemon"],
                 "additionalProperties": False
             }
+
             
             request_params = {
                 "model": self.fast_model,
@@ -4450,7 +4452,10 @@ Be precise. Only include inferences with probability >= 60.0."""
                     # Find the move in available moves for this slot
                     if i < len(battle.available_moves) and battle.available_moves[i]:
                         for move in battle.available_moves[i]:
-                            if move_id in move.id.lower() or move.id.lower() in move_id:
+                            def norm(s: str) -> str:
+                                return (s or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+
+                            if norm(move_id) == norm(move.id):
                                 # =====================================================
                                 # CRITICAL: Validate and fix target
                                 # =====================================================
@@ -4474,11 +4479,11 @@ Be precise. Only include inferences with probability >= 60.0."""
                                 
                                 print(f"  [TARGET] Slot{i+1} {move.id}: requested={target}, validated={validated_target}")
                                 
-                                orders[i] = BattleOrder(
-                                    move, 
-                                    move_target=validated_target,
-                                    terastallize=tera
-                                )
+                                if validated_target is None:
+                                    orders[i] = BattleOrder(move, terastallize=tera)  # ✅ target 아예 생략
+                                else:
+                                    orders[i] = BattleOrder(move, move_target=validated_target, terastallize=tera)
+                                
                                 break
                 
                 elif action_type == "switch":
@@ -4611,7 +4616,7 @@ Be precise. Only include inferences with probability >= 60.0."""
                             # Get a valid target
                             fallback_target = 1  # Default: opponent slot 1
                             try:
-                                targets = battle.get_possible_showdown_targets(fallback_move, battle.active_pokemon[i])
+                                targets = battle.get_possible_showdown_targets(fallback_move, i)  # slot index
                                 if targets:
                                     fallback_target = targets[0]
                             except:
@@ -4693,7 +4698,7 @@ Be precise. Only include inferences with probability >= 60.0."""
         requested_target: int, 
         slot: int,
         battle: DoubleBattle
-    ) -> int:
+    ) -> Optional[int]:
         """
         Validate and fix move target to prevent illegal/stupid targeting.
         
@@ -4730,7 +4735,6 @@ Be precise. Only include inferences with probability >= 60.0."""
             "alladjacentfoes",  # Hyper Voice, Dazzling Gleam, Heat Wave, Make It Rain, etc.
             "all",              # Perish Song, etc.
             "foeside",          # Stealth Rock, Spikes, etc.
-            "allies",           # Helping Hand targets ally but no target selection
             "randomnormal",     # Sleep Talk, Metronome, etc.
             "scripted",         # Counter, Mirror Coat, etc.
             "allyteam",         # Heal Bell, Aromatherapy, etc.
@@ -4748,9 +4752,9 @@ Be precise. Only include inferences with probability >= 60.0."""
         )
         
         if is_no_target_move:
-            if requested_target != 0 and requested_target is not None:
+            if requested_target not in (0, None):
                 print(f"    [NO-TARGET] Move '{move.id}' (target_type={move_target_type}) doesn't take a target - ignoring target={requested_target}")
-            return 0  # No-target moves use 0 or None
+            return None  # ✅ IMPORTANT: omit target in /choose
         
         # =========================================================================
         # Rule 1: Damaging moves should NEVER target ally (-1) in normal situations
